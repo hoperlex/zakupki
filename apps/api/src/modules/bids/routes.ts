@@ -23,7 +23,7 @@ export async function bidRoutes(app: FastifyInstance): Promise<void> {
 
   // static path — Fastify prioritizes it over '/:id'
   r.get('/my-bids', { preHandler: app.requireRole('supplier') }, async (request) =>
-    getMyBidsList(app.db, viewerOf(request)!.orgId),
+    getMyBidsList(app.db, viewerOf(request)!.userId),
   );
 
   r.get(
@@ -50,7 +50,7 @@ export async function bidRoutes(app: FastifyInstance): Promise<void> {
   r.get(
     '/:id/my-rank',
     { preHandler: app.authenticate, schema: { params: idParam } },
-    async (request) => getRankSnapshot(app.db, request.params.id, viewerOf(request)!.orgId),
+    async (request) => getRankSnapshot(app.db, request.params.id, viewerOf(request)!.userId),
   );
 
   // SSE live-rank stream (auth via access cookie; EventSource sends it automatically)
@@ -69,7 +69,7 @@ export async function bidRoutes(app: FastifyInstance): Promise<void> {
 
     const send = async () => {
       try {
-        const snap = await getRankSnapshot(app.db, tenderId, viewer.orgId);
+        const snap = await getRankSnapshot(app.db, tenderId, viewer.userId);
         reply.raw.write(`data: ${JSON.stringify(snap)}\n\n`);
       } catch {
         /* ignore transient errors */

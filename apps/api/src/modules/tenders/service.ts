@@ -15,9 +15,11 @@ import {
   organizations,
   tenderPositions,
   tenders,
+  users,
   type Database,
 } from '@zakupki/db';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors';
+import { hasInvitationAccess } from '../invitations/service';
 
 export interface Viewer {
   userId: string;
@@ -140,15 +142,15 @@ export async function getTenderDetail(
   if (!tender) throw notFound('Тендер не найден');
 
   const isManager = viewer && (viewer.role === 'manager' || viewer.role === 'admin');
-  // closed tenders: only owner staff, participants, or invited may view (invitations handled in M7)
+  // closed tenders: only owner staff, participants (have a bid), or invited (accepted invitation) may view
   if (tender.visibility === 'closed' && !isManager) {
-    // allow if the viewer already has a bid (participant)
     const participant = viewer?.orgId
       ? await db.query.bids.findFirst({
           where: (b, { and: a, eq: e }) => a(e(b.tenderId, id), e(b.supplierOrgId, viewer.orgId!)),
         })
       : null;
-    if (!participant) throw forbidden('Тендер доступен только приглашённым участникам');
+    const invited = viewer ? await hasInvitationAccess(db, id, viewer.userId) : false;
+    if (!participant && !invited) throw forbidden('Тендер доступен только приглашённым участникам');
   }
   if (tender.status === 'draft' && !isManager) throw notFound('Тендер не найден');
 
@@ -207,8 +209,11 @@ async function computeCanBid(
   if (!viewer) return { canBid: false, bidBlockReason: 'Войдите, чтобы участвовать' };
   if (viewer.role !== 'supplier')
     return { canBid: false, bidBlockReason: 'Только поставщики подают предложения' };
-  if (!viewer.orgId) return { canBid: false, bidBlockReason: 'Заполните карточку компании' };
-  const org = await db.query.organizations.findFirst({ where: eq(organizations.id, viewer.orgId) });
+  // resolve org from DB — the JWT orgId can be stale right after the org is created
+  const user = await db.query.users.findFirst({ where: eq(users.id, viewer.userId) });
+  const orgId = user?.organizationId;
+  if (!orgId) return { canBid: false, bidBlockReason: 'Заполните карточку компании' };
+  const org = await db.query.organizations.findFirst({ where: eq(organizations.id, orgId) });
   if (!org || !org.inn || !org.ogrn || !org.legalAddress)
     return { canBid: false, bidBlockReason: 'Заполните карточку компании' };
 

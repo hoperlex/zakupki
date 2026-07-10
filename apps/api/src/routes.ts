@@ -4,6 +4,7 @@ import { authRoutes } from './modules/auth/routes';
 import { bidRoutes } from './modules/bids/routes';
 import { categoryRoutes } from './modules/categories/routes';
 import { fileRoutes } from './modules/files/routes';
+import { invitationRoutes } from './modules/invitations/routes';
 import { notificationRoutes } from './modules/notifications/routes';
 import { organizationRoutes } from './modules/organizations/routes';
 import { tenderRoutes } from './modules/tenders/routes';
@@ -18,4 +19,5 @@ export async function routes(app: FastifyInstance): Promise<void> {
   await app.register(notificationRoutes, { prefix: '/notifications' });
   await app.register(tenderRoutes, { prefix: '/tenders' });
   await app.register(bidRoutes, { prefix: '/tenders' });
+  await app.register(invitationRoutes);
 }

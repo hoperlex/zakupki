@@ -16,6 +16,8 @@ import { SuppliersRegistry } from './features/admin/SuppliersRegistry';
 import { TenderManagePage } from './features/admin/TenderManagePage';
 import { TenderWizard } from './features/admin/TenderWizard';
 import { BidComparisonPage } from './features/bidding/BidComparisonPage';
+import { InvitationsPage } from './features/invitations/InvitationsPage';
+import { InvitePage } from './features/invitations/InvitePage';
 import { SupplierMyBidsPage } from './features/supplier/SupplierMyBidsPage';
 import { NotificationsPage } from './features/notifications/NotificationsPage';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage';
@@ -36,7 +38,7 @@ export default function App() {
         <Route path="register" element={<RegisterPage />} />
         <Route path="forgot-password" element={<ForgotPasswordPage />} />
         <Route path="reset-password" element={<ResetPasswordPage />} />
-        <Route path="invite/:token" element={<Placeholder title="Приглашение в тендер" />} />
+        <Route path="invite/:token" element={<InvitePage />} />
       </Route>
 
       {/* Supplier cabinet */}
@@ -70,6 +72,7 @@ export default function App() {
         <Route path="tenders/new" element={<TenderWizard />} />
         <Route path="tenders/:id" element={<TenderManagePage />} />
         <Route path="tenders/:id/bids" element={<BidComparisonPage />} />
+        <Route path="tenders/:id/invitations" element={<InvitationsPage />} />
         <Route path="suppliers" element={<SuppliersRegistry />} />
         <Route path="categories" element={<CategoriesAdmin />} />
         <Route path="notifications" element={<NotificationsPage />} />

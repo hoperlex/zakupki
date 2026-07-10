@@ -13,6 +13,7 @@ import {
   organizations,
   tenderPositions,
   tenders,
+  users,
   type Database,
 } from '@zakupki/db';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
@@ -20,7 +21,14 @@ import { lineAmountWithVat, lt, lte } from '../../lib/money';
 import { bus } from '../../lib/events';
 import { notifyOrg } from '../../lib/notify';
 import { env } from '../../config/env';
+import { hasInvitationAccess } from '../invitations/service';
 import type { Viewer } from '../tenders/service';
+
+/** The user's CURRENT organization (JWT orgId can be stale right after the org is created). */
+async function currentOrgId(db: Database, userId: string): Promise<string | null> {
+  const u = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  return u?.organizationId ?? null;
+}
 
 async function loadMyBid(db: Database, tenderId: string, orgId: string) {
   return db.query.bids.findFirst({
@@ -74,7 +82,8 @@ export interface MyBidListItem {
   participants: number;
 }
 
-export async function getMyBidsList(db: Database, orgId: string | null): Promise<MyBidListItem[]> {
+export async function getMyBidsList(db: Database, userId: string): Promise<MyBidListItem[]> {
+  const orgId = await currentOrgId(db, userId);
   if (!orgId) return [];
   const rows = await db.query.bids.findMany({
     where: and(eq(bids.supplierOrgId, orgId), ne(bids.status, 'withdrawn')),
@@ -103,8 +112,9 @@ export async function getMyBid(
   tenderId: string,
   viewer: Viewer,
 ): Promise<MyBidOutput | null> {
-  if (!viewer.orgId) return null;
-  const bid = await loadMyBid(db, tenderId, viewer.orgId);
+  const orgId = await currentOrgId(db, viewer.userId);
+  if (!orgId) return null;
+  const bid = await loadMyBid(db, tenderId, orgId);
   if (!bid) return null;
   return toMyBidOutput(bid, await participants(db, tenderId));
 }
@@ -112,8 +122,9 @@ export async function getMyBid(
 export async function getRankSnapshot(
   db: Database,
   tenderId: string,
-  orgId: string | null,
+  userId: string | null,
 ): Promise<RankSnapshot> {
+  const orgId = userId ? await currentOrgId(db, userId) : null;
   const tender = await db.query.tenders.findFirst({ where: eq(tenders.id, tenderId) });
   if (!tender) throw notFound('Тендер не найден');
   const myBid = orgId ? await loadMyBid(db, tenderId, orgId) : null;
@@ -136,7 +147,8 @@ export async function submitBid(
   input: SubmitBidInput,
 ): Promise<MyBidOutput> {
   if (viewer.role !== 'supplier') throw forbidden('Только поставщики подают предложения');
-  if (!viewer.orgId) throw badRequest('Заполните карточку компании');
+  const orgId = await currentOrgId(db, viewer.userId);
+  if (!orgId) throw badRequest('Заполните карточку компании');
 
   const result = await db.transaction(async (tx) => {
     // serialize submits + extension per tender
@@ -148,10 +160,13 @@ export async function submitBid(
     }
 
     // accreditation / access gate: open tenders require accreditation; closed => invited only
-    const org = await tx.query.organizations.findFirst({ where: eq(organizations.id, viewer.orgId!) });
+    const org = await tx.query.organizations.findFirst({ where: eq(organizations.id, orgId) });
     if (!org) throw badRequest('Организация не найдена');
     if (tender.visibility === 'open' && org.accreditationStatus !== 'accredited') {
       throw forbidden('Требуется аккредитация службой безопасности');
+    }
+    if (tender.visibility === 'closed' && !(await hasInvitationAccess(tx, tenderId, viewer.userId))) {
+      throw forbidden('Тендер доступен только приглашённым участникам');
     }
 
     const positions = await tx.query.tenderPositions.findMany({
@@ -190,7 +205,7 @@ export async function submitBid(
     const vatAmountStr = totalWith.minus(totalWithout).toFixed(2);
 
     // existing active bid → re-offer must be strictly lower (+ step vs own bid)
-    const existing = await loadMyBid(tx, tenderId, viewer.orgId!);
+    const existing = await loadMyBid(tx, tenderId, orgId);
     if (existing) {
       if (!lt(totalWithStr, existing.totalWithVat)) {
         throw unprocessable('Новое предложение должно быть ниже вашего текущего');
@@ -232,7 +247,7 @@ export async function submitBid(
         .insert(bids)
         .values({
           tenderId,
-          supplierOrgId: viewer.orgId!,
+          supplierOrgId: orgId,
           createdBy: viewer.userId,
           status: 'submitted',
           totalWithoutVat: totalWithoutStr,
@@ -281,7 +296,7 @@ export async function submitBid(
     await tx.insert(bidHistory).values({
       bidId,
       tenderId,
-      supplierOrgId: viewer.orgId!,
+      supplierOrgId: orgId,
       totalWithVat: totalWithStr,
       rankAfter: ranked?.rank ?? null,
       triggeredExtension,
@@ -291,13 +306,14 @@ export async function submitBid(
   });
 
   bus.emitTenderChanged(tenderId, 'bid');
-  const bid = await loadMyBid(db, tenderId, viewer.orgId);
+  const bid = await loadMyBid(db, tenderId, orgId);
   return toMyBidOutput(bid!, await participants(db, tenderId));
 }
 
 export async function withdrawBid(db: Database, tenderId: string, viewer: Viewer): Promise<void> {
-  if (!viewer.orgId) throw badRequest('Нет организации');
-  const bid = await loadMyBid(db, tenderId, viewer.orgId);
+  const orgId = await currentOrgId(db, viewer.userId);
+  if (!orgId) throw badRequest('Нет организации');
+  const bid = await loadMyBid(db, tenderId, orgId);
   if (!bid) throw notFound('Предложение не найдено');
   await db.transaction(async (tx) => {
     await tx.update(bids).set({ status: 'withdrawn', rank: null, isBest: false }).where(eq(bids.id, bid.id));
