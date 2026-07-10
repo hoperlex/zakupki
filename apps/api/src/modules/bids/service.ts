@@ -15,9 +15,10 @@ import {
   tenders,
   users,
   type Database,
+  type DbClient,
 } from '@zakupki/db';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
-import { lineAmountWithVat, lt, lte } from '../../lib/money';
+import { lineAmountWithVat, lt, meetsMinStep } from '../../lib/money';
 import { bus } from '../../lib/events';
 import { notifyOrg } from '../../lib/notify';
 import { env } from '../../config/env';
@@ -30,7 +31,7 @@ async function currentOrgId(db: Database, userId: string): Promise<string | null
   return u?.organizationId ?? null;
 }
 
-async function loadMyBid(db: Database, tenderId: string, orgId: string) {
+async function loadMyBid(db: DbClient, tenderId: string, orgId: string) {
   return db.query.bids.findFirst({
     where: and(eq(bids.tenderId, tenderId), eq(bids.supplierOrgId, orgId), ne(bids.status, 'withdrawn')),
     with: { items: true },
@@ -204,24 +205,27 @@ export async function submitBid(
     const totalWithStr = totalWith.toFixed(2);
     const vatAmountStr = totalWith.minus(totalWithout).toFixed(2);
 
+    // capture the current leader (for outbid notification)
+    const prevLeader = await tx.query.bids.findFirst({
+      where: and(eq(bids.tenderId, tenderId), eq(bids.isBest, true), ne(bids.status, 'withdrawn')),
+    });
+    const prevLeaderOrgId = prevLeader?.supplierOrgId ?? null;
+
     // existing active bid → re-offer must be strictly lower (+ step vs own bid)
     const existing = await loadMyBid(tx, tenderId, orgId);
     if (existing) {
       if (!lt(totalWithStr, existing.totalWithVat)) {
         throw unprocessable('Новое предложение должно быть ниже вашего текущего');
       }
-      if (tender.minStepAbs) {
-        const threshold = new Decimal(existing.totalWithVat).minus(tender.minStepAbs);
-        if (!lte(totalWithStr, threshold.toFixed(2))) {
-          throw unprocessable(`Снижение должно быть не менее ${tender.minStepAbs} ₽`);
-        }
-      } else if (tender.minStepPct) {
-        const threshold = new Decimal(existing.totalWithVat).times(
-          new Decimal(1).minus(new Decimal(tender.minStepPct).dividedBy(100)),
+      if (!meetsMinStep(totalWithStr, existing.totalWithVat, {
+        absStep: tender.minStepAbs,
+        pctStep: tender.minStepPct,
+      })) {
+        throw unprocessable(
+          tender.minStepAbs
+            ? `Снижение должно быть не менее ${tender.minStepAbs} ₽`
+            : `Снижение должно быть не менее ${tender.minStepPct}%`,
         );
-        if (!lte(totalWithStr, threshold.toFixed(2))) {
-          throw unprocessable(`Снижение должно быть не менее ${tender.minStepPct}%`);
-        }
       }
     }
 
@@ -302,10 +306,23 @@ export async function submitBid(
       triggeredExtension,
     });
 
-    return bidId;
+    const outbidOrgId =
+      ranked?.isBest && prevLeaderOrgId && prevLeaderOrgId !== orgId ? prevLeaderOrgId : null;
+    return { bidId, outbidOrgId, tenderNumber: tender.number, tenderTitle: tender.title };
   });
 
   bus.emitTenderChanged(tenderId, 'bid');
+
+  // notify the supplier who just lost the lead
+  if (result.outbidOrgId) {
+    await notifyOrg(db, result.outbidOrgId, {
+      type: 'outbid',
+      title: `Ваше предложение перебили — ${result.tenderNumber}`,
+      body: `По тендеру «${result.tenderTitle}» появилось более выгодное предложение. Снизьте цену, чтобы вернуть лидерство.`,
+      link: `${env.PUBLIC_WEB_URL}/app/tenders/${tenderId}`,
+    });
+  }
+
   const bid = await loadMyBid(db, tenderId, orgId);
   return toMyBidOutput(bid!, await participants(db, tenderId));
 }

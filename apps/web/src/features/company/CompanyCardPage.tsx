@@ -29,7 +29,14 @@ import { fetchMyOrg, lookupInn, saveCompanyCard, submitAccreditation } from './a
 
 const { Title, Text } = Typography;
 
-function treeData(nodes: CategoryNode[]): { title: string; value: string; children?: unknown[] }[] {
+interface TreeNode {
+  title: string;
+  value: string;
+  selectable?: boolean;
+  children?: TreeNode[];
+}
+
+function treeData(nodes: CategoryNode[]): TreeNode[] {
   return nodes.map((n) => ({
     title: n.name,
     value: n.id,

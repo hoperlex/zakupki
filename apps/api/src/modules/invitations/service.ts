@@ -4,7 +4,7 @@ import type {
   InvitationOutput,
   InvitationPreview,
 } from '@zakupki/shared';
-import { invitations, tenders, users, type Database } from '@zakupki/db';
+import { invitations, tenders, users, type Database, type DbClient } from '@zakupki/db';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { randomToken, sha256 } from '../../lib/tokens';
 import { sendMail } from '../../lib/mail';
@@ -164,7 +164,7 @@ export async function acceptInvitation(
 
 /** True if the user was invited to (and accepted) this tender — grants view/bid on closed tenders. */
 export async function hasInvitationAccess(
-  db: Database,
+  db: DbClient,
   tenderId: string,
   userId: string | null,
 ): Promise<boolean> {

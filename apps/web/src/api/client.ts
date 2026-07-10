@@ -56,7 +56,7 @@ async function doFetch(path: string, opts: ApiOptions): Promise<Response> {
     headers['content-type'] = 'application/json';
     body = JSON.stringify(opts.body);
   }
-  if (method !== 'GET' && method !== 'HEAD') {
+  if (method !== 'GET') {
     const csrf = getCookie('csrf');
     if (csrf) headers['x-csrf-token'] = csrf;
   }

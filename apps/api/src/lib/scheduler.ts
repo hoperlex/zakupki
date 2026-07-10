@@ -1,7 +1,9 @@
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, lte, ne } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { tenders } from '@zakupki/db';
+import { bids, tenders } from '@zakupki/db';
+import { env } from '../config/env';
 import { bus } from './events';
+import { notifyOrg, notifyUser } from './notify';
 
 /**
  * Lightweight in-process scheduler: transitions tenders past their deadline
@@ -15,9 +17,7 @@ export function startScheduler(app: FastifyInstance): void {
       const started = await app.db
         .update(tenders)
         .set({ status: 'collecting', updatedAt: now })
-        .where(
-          and(eq(tenders.status, 'published'), lte(tenders.startsAt, now)),
-        )
+        .where(and(eq(tenders.status, 'published'), lte(tenders.startsAt, now)))
         .returning({ id: tenders.id });
       for (const t of started) bus.emitTenderChanged(t.id, 'status');
 
@@ -26,8 +26,36 @@ export function startScheduler(app: FastifyInstance): void {
         .update(tenders)
         .set({ status: 'under_review', updatedAt: now })
         .where(and(eq(tenders.status, 'collecting'), lte(tenders.deadlineAt, now)))
-        .returning({ id: tenders.id });
-      for (const t of closed) bus.emitTenderChanged(t.id, 'deadline');
+        .returning({
+          id: tenders.id,
+          number: tenders.number,
+          title: tenders.title,
+          createdBy: tenders.createdBy,
+        });
+
+      for (const t of closed) {
+        bus.emitTenderChanged(t.id, 'deadline');
+        // notify the manager to review
+        await notifyUser(app.db, t.createdBy, {
+          type: 'deadline',
+          title: `Тендер ${t.number}: приём завершён`,
+          body: `По тендеру «${t.title}» завершён приём предложений — подведите итоги.`,
+          link: `${env.PUBLIC_WEB_URL}/admin/tenders/${t.id}/bids`,
+        });
+        // notify participants
+        const partRows = await app.db
+          .selectDistinct({ orgId: bids.supplierOrgId })
+          .from(bids)
+          .where(and(eq(bids.tenderId, t.id), ne(bids.status, 'withdrawn')));
+        for (const p of partRows) {
+          await notifyOrg(app.db, p.orgId, {
+            type: 'deadline',
+            title: `Тендер ${t.number}: приём завершён`,
+            body: `Приём предложений завершён. Ожидайте подведения итогов.`,
+            link: `${env.PUBLIC_WEB_URL}/app/tenders/${t.id}`,
+          });
+        }
+      }
     } catch (err) {
       app.log.error({ err }, 'scheduler tick failed');
     }
@@ -35,6 +63,5 @@ export function startScheduler(app: FastifyInstance): void {
 
   const interval = setInterval(tick, 30_000);
   app.addHook('onClose', async () => clearInterval(interval));
-  // run once shortly after boot
   setTimeout(tick, 3_000);
 }

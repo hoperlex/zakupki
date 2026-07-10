@@ -88,10 +88,11 @@ export async function listTenders(
     .limit(query.limit)
     .offset(offset);
 
-  const [{ total }] = await db
+  const totalRows = await db
     .select({ total: sql<number>`count(*)`.mapWith(Number) })
     .from(tenders)
     .where(where);
+  const total = totalRows[0]?.total ?? 0;
 
   const items: TenderSummary[] = rows.map((row) => ({
     id: row.id,
@@ -109,7 +110,7 @@ export async function listTenders(
     createdAt: row.createdAt.toISOString(),
   }));
 
-  return { items, total: total ?? 0, page: query.page, limit: query.limit };
+  return { items, total, page: query.page, limit: query.limit };
 }
 
 function mapPosition(p: typeof tenderPositions.$inferSelect): PositionOutput {

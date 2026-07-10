@@ -17,4 +17,8 @@ export function createDb(connectionString: string, max = 10): DbHandle {
 }
 
 export type Database = DbHandle['db'];
+/** Transaction handle (first arg of db.transaction callback). */
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+/** Accepts either the pooled db or an open transaction — for query-only helpers. */
+export type DbClient = Database | Transaction;
 export { schema };

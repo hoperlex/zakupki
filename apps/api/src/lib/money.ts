@@ -39,3 +39,26 @@ export function lt(a: Decimal.Value, b: Decimal.Value): boolean {
 export function lte(a: Decimal.Value, b: Decimal.Value): boolean {
   return new Decimal(a).lessThanOrEqualTo(b);
 }
+
+/**
+ * A re-offer must be strictly lower than the org's own current bid, and — if a
+ * min-step is configured — beat it by at least that absolute amount / percent.
+ * No comparison against competitors (the leader is invisible to suppliers).
+ */
+export function meetsMinStep(
+  newTotal: Decimal.Value,
+  existingTotal: Decimal.Value,
+  opts: { absStep?: string | null; pctStep?: string | null },
+): boolean {
+  const n = new Decimal(newTotal);
+  const e = new Decimal(existingTotal);
+  if (!n.lessThan(e)) return false;
+  if (opts.absStep) {
+    return n.lessThanOrEqualTo(e.minus(opts.absStep));
+  }
+  if (opts.pctStep) {
+    const threshold = e.times(new Decimal(1).minus(new Decimal(opts.pctStep).dividedBy(100)));
+    return n.lessThanOrEqualTo(threshold);
+  }
+  return true;
+}

@@ -22,9 +22,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .status(422)
         .send({ error: 'validation', message: 'Ошибка валидации данных', details: err.flatten() });
     }
-    const statusCode = (err as { statusCode?: number }).statusCode;
-    if (statusCode && statusCode < 500) {
-      return reply.status(statusCode).send({ error: 'error', message: err.message });
+    const asErr = err as { statusCode?: number; message?: string };
+    if (asErr.statusCode && asErr.statusCode < 500) {
+      return reply.status(asErr.statusCode).send({ error: 'error', message: asErr.message ?? 'Ошибка' });
     }
     request.log.error(err);
     return reply.status(500).send({ error: 'internal', message: 'Внутренняя ошибка сервера' });
