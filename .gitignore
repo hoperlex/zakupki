@@ -1,3 +1,6 @@
+# Local file storage (uploaded documents)
+.local/
+
 # Logs
 logs
 *.log
@@ -141,3 +144,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Claude Code local settings
+.claude/settings.local.json

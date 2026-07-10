@@ -1,0 +1,68 @@
+:root {
+  --su-primary: #a05850;
+  --su-primary-dark: #9c5148;
+  --su-ink: #000000;
+  --su-ink-soft: #1e1d1d;
+  --su-muted: #8b8996;
+  --su-surface: #ffffff;
+  --su-surface-alt: #f9f9fa;
+  --su-hairline: #e4e5e9;
+  --su-overlay: rgba(166, 88, 80, 0.95);
+  --su-radius: 10px;
+  --su-font-display: 'Unbounded', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: 'Inter', 'PT Root UI', -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--su-ink-soft);
+  background: var(--su-surface-alt);
+}
+
+/* Display face for headings + brand marks */
+:where(h1, h2, h3, .su-display) {
+  font-family: var(--su-font-display);
+  letter-spacing: -0.01em;
+}
+
+.su-uppercase {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Signature: terracotta wash over tender cards on hover */
+.tender-card {
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.tender-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(147, 149, 160, 0.18);
+}
+
+.brand-hero {
+  background:
+    linear-gradient(120deg, rgba(0, 0, 0, 0.72) 0%, rgba(30, 29, 29, 0.55) 45%, rgba(160, 88, 80, 0.68) 100%),
+    #1e1d1d;
+  color: #fff;
+}
+
+a {
+  color: var(--su-primary-dark);
+}
+
+.mono-num {
+  font-variant-numeric: tabular-nums;
+}

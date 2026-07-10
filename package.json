@@ -1,0 +1,26 @@
+{
+  "name": "zakupki",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Тендерный портал (ЭТП) ООО «СУ-10» — MVP",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "dev:api": "pnpm --filter @zakupki/api dev",
+    "dev:web": "pnpm --filter @zakupki/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @zakupki/db db:generate",
+    "db:migrate": "pnpm --filter @zakupki/db db:migrate",
+    "db:seed": "pnpm --filter @zakupki/db db:seed",
+    "db:reset": "pnpm --filter @zakupki/db db:reset"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3"
+  }
+}
