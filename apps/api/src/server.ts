@@ -17,6 +17,8 @@ import { routes } from './routes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
+    // Behind nginx (prod): honor X-Forwarded-* for correct client IP & rate-limiting.
+    trustProxy: env.TRUST_PROXY,
     logger:
       env.NODE_ENV === 'development'
         ? {

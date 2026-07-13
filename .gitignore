@@ -72,6 +72,18 @@ web_modules/
 .env
 .env.*
 !.env.example
+!deploy/.env.production.example
+# generated prod env with real secrets — never commit
+deploy/.env.production.out
+
+# secrets, TLS certs & keys — never commit (deploy artifacts live on the server)
+*.crt
+*.pem
+*.key
+temp/
+docs/certs/
+deploy/vps.env
+deploy/*.local.*
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

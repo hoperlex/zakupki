@@ -1,0 +1,44 @@
+# Production stack for zakupki — sits behind the shared infra-nginx on the `edge`
+# network (same pattern as estimat/billhub). No published host ports: the app is
+# reachable only via infra-nginx inside `edge`.
+#
+# Run from the repo root on the VPS:
+#   docker compose -f deploy/docker-compose.yml -p zakupki build
+#   docker compose -f deploy/docker-compose.yml -p zakupki run --rm api pnpm --filter @zakupki/db db:migrate
+#   docker compose -f deploy/docker-compose.yml -p zakupki up -d
+#
+# Paths below are relative to this file's dir (deploy/), i.e. they resolve to the
+# repo root: ../.env.production and ../certs/yandex-root.crt.
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: zakupki-api:latest
+    container_name: zakupki-api
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    volumes:
+      # Yandex Managed PostgreSQL CA (verify-full). Matches DATABASE_SSL_CA in env.
+      - ../certs/yandex-root.crt:/app/certs/yandex-root.crt:ro
+      # Uploaded documents (STORAGE_ROOT) — persists across deploys.
+      - zakupki-storage:/var/lib/zakupki/storage
+    networks: [edge]
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: zakupki-web:latest
+    container_name: zakupki-web
+    restart: unless-stopped
+    networks: [edge]
+
+volumes:
+  zakupki-storage:
+
+networks:
+  edge:
+    external: true

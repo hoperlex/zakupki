@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
-import { DATABASE_URL, MIGRATIONS_DIR } from './loadEnv';
+import { DATABASE_URL, MIGRATIONS_DIR, pgSslOption } from './loadEnv';
 
 type Pg = ReturnType<typeof postgres>;
 
@@ -52,7 +52,7 @@ export async function runMigrations(sql: Pg): Promise<string[]> {
 }
 
 async function main() {
-  const sql = postgres(DATABASE_URL, { max: 1 });
+  const sql = postgres(DATABASE_URL, { max: 1, ...pgSslOption() });
   try {
     console.log('Applying migrations…');
     const applied = await runMigrations(sql);

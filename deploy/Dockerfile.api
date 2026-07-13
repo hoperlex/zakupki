@@ -1,0 +1,19 @@
+# zakupki API (Fastify) — pnpm monorepo, run via tsx.
+# Build context = repo root:  docker build -f deploy/Dockerfile.api .
+FROM node:20-bookworm-slim
+
+# Corepack ships the pinned pnpm from package.json (packageManager field).
+RUN corepack enable
+WORKDIR /app
+
+# Copy the whole workspace (node_modules/.git/.env excluded via .dockerignore),
+# then install only the API and its workspace deps. --prod=false keeps tsx (a
+# devDependency) available at runtime.
+COPY . .
+RUN pnpm install --frozen-lockfile --filter "@zakupki/api..." --prod=false
+
+ENV NODE_ENV=production
+# Runtime env (DATABASE_URL, secrets, DATABASE_SSL_CA, …) comes from compose env_file.
+USER node
+EXPOSE 3000
+CMD ["pnpm", "--filter", "@zakupki/api", "start"]

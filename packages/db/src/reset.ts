@@ -1,12 +1,12 @@
 import postgres from 'postgres';
 import { createDb } from './client';
-import { DATABASE_URL } from './loadEnv';
+import { DATABASE_URL, pgSslOption } from './loadEnv';
 import { runMigrations } from './migrate';
 import { seed } from './seed';
 
 async function main() {
   console.log('Resetting database (DROP SCHEMA public CASCADE)…');
-  const raw = postgres(DATABASE_URL, { max: 1 });
+  const raw = postgres(DATABASE_URL, { max: 1, ...pgSslOption() });
   try {
     await raw.unsafe('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;').simple();
     console.log('Applying migrations…');

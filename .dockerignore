@@ -1,0 +1,22 @@
+# Keep the Docker build context small and free of host artifacts/secrets.
+**/node_modules
+.git
+.gitignore
+
+# secrets & local env — NEVER copy into images
+.env
+.env.*
+!.env.example
+certs/
+temp/
+docs/certs/
+
+# build outputs (images build their own)
+**/dist
+.local/
+*.tsbuildinfo
+
+# local tooling
+.claude/
+.vscode/
+*.log

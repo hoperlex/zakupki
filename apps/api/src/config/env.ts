@@ -12,6 +12,12 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   API_HOST: z.string().default('0.0.0.0'),
   API_PORT: z.coerce.number().int().positive().default(3000),
+  // Trust X-Forwarded-* from the reverse proxy (nginx). Enable in prod so
+  // request.ip / protocol / secure reflect the real client behind the proxy.
+  TRUST_PROXY: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1' || v.toLowerCase() === 'yes'),
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),

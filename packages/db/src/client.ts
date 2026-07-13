@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { pgSslOption } from './loadEnv';
 import * as schema from './schema';
 
 export type Sql = ReturnType<typeof postgres>;
@@ -11,7 +12,7 @@ export interface DbHandle {
 }
 
 export function createDb(connectionString: string, max = 10): DbHandle {
-  const sql = postgres(connectionString, { max });
+  const sql = postgres(connectionString, { max, ...pgSslOption() });
   const db = drizzle(sql, { schema });
   return { db, sql, close: () => sql.end() };
 }

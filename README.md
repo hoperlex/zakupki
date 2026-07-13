@@ -31,7 +31,8 @@
 
 > Соответствует корпоративному стандарту (`temp/corp_standard_short_single_vps.md`).
 > Для MVP осознанно упрощено: своя авторизация вместо Keycloak, локальный диск вместо S3,
-> без Docker, pino в dev-минимуме.
+> без Docker в dev (прод — Docker Compose за общим nginx, см. [«Production / VPS»](#production--vps)),
+> pino в dev-минимуме.
 
 ## Структура репозитория
 
@@ -102,6 +103,90 @@ pnpm dev
 | `pnpm db:migrate` | применить SQL-миграции |
 | `pnpm db:seed` | загрузить демо-данные |
 | `pnpm db:reset` | пересоздать схему + сид |
+
+## Production / VPS
+
+Прод-развёртывание на single-VPS `zak.su10.ru` — **Docker Compose стек за общим
+reverse-proxy `infra-nginx`** (тот же паттерн, что у соседних порталов на этом хосте).
+Стек не публикует хостовые порты; наружу торчит только `infra-nginx` (80/443, TLS от
+Let's Encrypt через `infra-certbot`). БД — **внешняя Yandex Managed PostgreSQL** по SSL
+`verify-full`.
+
+```
+Internet ──443──▶ infra-nginx ──▶ /api ─▶ zakupki-api:3000 (Fastify)
+                                └▶ /   ─▶ zakupki-web:80   (SPA)
+zakupki-api ──SSL verify-full──▶ Yandex Managed PostgreSQL (внешняя)
+```
+
+Артефакты деплоя — в [`deploy/`](deploy/): `Dockerfile.api`, `Dockerfile.web`,
+`web-nginx.conf`, `docker-compose.yml`, `conf.d/zakupki.conf` (vhost для infra-nginx),
+`.env.production.example`, `deploy.sh`, `make-prod-env.sh`. Подробный план и разведка
+хоста — [`deploy/PLAN.md`](deploy/PLAN.md); правила работы с секретами —
+[`deploy/SECURITY.md`](deploy/SECURITY.md).
+
+### Чек-лист окружения (сервер)
+
+`/opt/portals/zakupki/.env.production` (chmod 600, **не коммитится**) — из
+`deploy/.env.production.example`. Обязательно задать:
+
+| Переменная | Значение в прод |
+|---|---|
+| `NODE_ENV` | `production` |
+| `TRUST_PROXY` | `true` (API за nginx) |
+| `WEB_ORIGIN`, `PUBLIC_WEB_URL` | `https://zak.su10.ru` |
+| `DATABASE_URL` | строка Yandex Managed PG (порт обычно `6432`) |
+| `DATABASE_SSL_CA` | `/app/certs/yandex-root.crt` (путь **внутри** контейнера) |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | длинные случайные (`openssl rand -hex 32`) |
+| `STORAGE_ROOT` | `/var/lib/zakupki/storage` (volume `zakupki-storage`) |
+
+CA-сертификат Yandex («Internal Root CA») кладётся на сервер как
+`/opt/portals/zakupki/certs/yandex-root.crt` (не в git; монтируется ro в контейнер API).
+
+### Подготовка PostgreSQL
+
+Расширения **`citext`** и **`pgcrypto`** должны быть включены **заранее** (в Yandex Console
+→ кластер → Extensions, либо `CREATE EXTENSION`). Миграции их не создают.
+
+### Порядок деплоя
+
+```bash
+# 0. (локально) закоммитить+запушить изменения; сгенерировать прод-env без утечки секретов:
+deploy/make-prod-env.sh .env deploy/.env.production.out   # значения не печатаются
+
+# 1. (VPS) получить код
+sudo git clone <repo> /opt/portals/zakupki   # или: cd /opt/portals/zakupki && sudo git pull
+
+# 2. (VPS) секреты и CA — копируются отдельно по ssh (secret-safe):
+#    scp .env.production.out  → /opt/portals/zakupki/.env.production   (chmod 600)
+#    scp CA (temp/root.crt)   → /opt/portals/zakupki/certs/yandex-root.crt
+
+# 3. (VPS) сборка + миграции (без reset) + запуск
+sudo bash deploy/deploy.sh
+#   = docker compose -p zakupki build
+#     docker compose -p zakupki run --rm api pnpm --filter @zakupki/db db:migrate
+#     docker compose -p zakupki up -d api web
+
+# 4. (VPS, разово) TLS-сертификат через существующий certbot (ACME webroot)
+sudo docker run --rm \
+  -v /opt/infra/nginx/certbot/conf:/etc/letsencrypt \
+  -v /opt/infra/nginx/certbot/www:/var/www/certbot \
+  certbot/certbot certonly --webroot -w /var/www/certbot \
+  -d zak.su10.ru --email admin@su10.ru --agree-tos --no-eff-email
+
+# 5. (VPS, разово) подключить vhost к общему nginx и перечитать конфиг
+sudo cp deploy/conf.d/zakupki.conf /opt/infra/nginx/conf.d/zakupki.conf
+sudo docker exec infra-nginx nginx -t && sudo docker exec infra-nginx nginx -s reload
+
+# 6. Проверка
+curl -fsS https://zak.su10.ru/api/v1/health   # {"status":"ok",...}
+```
+
+Опциональные демо-данные (`pnpm db:seed`) — только для стенда, **не для прод**.
+Деструктивный `db:reset` в прод **не запускается**.
+
+> Это контролируемый single-VPS deploy для MVP (git pull → build на хосте). Обновление
+> портала не трогает `infra-nginx` и соседние сайты; откат — `docker compose -p zakupki down`
+> + удалить `zakupki.conf` из `conf.d` и `nginx -s reload`.
 
 ## Как это работает (ключевые решения)
 
