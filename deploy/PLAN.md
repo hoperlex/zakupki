@@ -91,6 +91,19 @@ zakupki-api ──SSL verify-full──> Yandex Managed PostgreSQL (внешни
 - Соседние сайты (estimat/billhub/keycloak) продолжают работать; `docker ps` без изменений по ним; `nginx -t` ok.
 - Локальный dev не сломан: `pnpm dev`, API :3000, `pnpm build`/typecheck зелёные.
 
+## Результат (as-built, развёрнуто)
+
+Портал развёрнут и работает: **https://zak.su10.ru** (`/api/v1/health` = ok; `/api/v1/categories`,
+`/api/v1/tenders` отдают данные из Yandex PG; SPA 200; HTTP→HTTPS 301). Соседи (estimat/rp/auth)
+не затронуты (все 200), `nginx -t` ok.
+
+- Код: `/opt/portals/zakupki` (git clone по публичному HTTPS). Обновление: `git pull` + `sudo bash deploy/deploy.sh`.
+- Контейнеры: `zakupki-api` (:3000) + `zakupki-web` (:80) в сети `edge`. Storage: volume `zakupki_zakupki-storage`.
+- Секреты: `/opt/portals/zakupki/.env.production` (600); CA: `certs/yandex-root.crt`.
+- vhost: `/opt/infra/nginx/conf.d/zakupki.conf`; TLS `zak.su10.ru` (Let's Encrypt, до 2026-10-11).
+- Бэкап инфры до изменений: `/home/corpsu/zakupki-deploy-backups/20260713-214729`.
+- Open item: после автопродления серта нужен reload infra-nginx (общая инфра-задача всех порталов).
+
 ## I. Решения (подтверждены пользователем)
 
 1. **Модель деплоя:** Docker Compose за infra-nginx ✓
