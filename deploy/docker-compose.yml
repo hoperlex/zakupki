@@ -2,20 +2,22 @@
 # network (same pattern as estimat/billhub). No published host ports: the app is
 # reachable only via infra-nginx inside `edge`.
 #
-# Run from the repo root on the VPS:
-#   docker compose -f deploy/docker-compose.yml -p zakupki build
-#   docker compose -f deploy/docker-compose.yml -p zakupki run --rm api pnpm --filter @zakupki/db db:migrate
-#   docker compose -f deploy/docker-compose.yml -p zakupki up -d
+# Do NOT drive this file by hand — use `deploy-zak` (deploy/deploy-zak.sh). It sets
+# ZAK_TAG and the ZAK_DEPLOY_* vars the one-off services below depend on, and it is
+# the only path that takes the deploy lock, backs up config and rotates releases.
 #
 # Paths below are relative to this file's dir (deploy/), i.e. they resolve to the
 # repo root: ../.env.production and ../certs/yandex-root.crt.
+#
+# ZAK_TAG is the short commit SHA of the release. `:latest` is a movable alias for
+# the last release that passed health — it is not a release of its own.
 
 services:
   api:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: zakupki-api:latest
+    image: zakupki-api:${ZAK_TAG:-latest}
     container_name: zakupki-api
     restart: unless-stopped
     env_file:
@@ -31,10 +33,53 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
-    image: zakupki-web:latest
+    image: zakupki-web:${ZAK_TAG:-latest}
     container_name: zakupki-web
     restart: unless-stopped
     networks: [edge]
+
+  # ---- One-off services (profile `tools`): never started by `up -d`. ----
+  # Both sit on the compose-default network, not `edge`: they only need outbound
+  # NAT to the managed database, and have no business seeing infra-nginx or the
+  # neighbouring portals. No container_name — `run` must not clash with the
+  # long-running services.
+
+  # Migration runner. Same image as api, but without the storage volume: schema
+  # changes have no business touching uploaded documents.
+  migrate:
+    image: zakupki-api:${ZAK_TAG:-latest}
+    profiles: ['tools']
+    env_file:
+      - ../.env.production
+    volumes:
+      - ../certs/yandex-root.crt:/app/certs/yandex-root.crt:ro
+    command: ['pnpm', '--silent', '--filter', '@zakupki/db', 'db:migrate']
+
+  # pg_dump / pg_restore for the pre-migration backup and for --restore-db.
+  db-tools:
+    image: postgres:17
+    profiles: ['tools']
+    # MUST be ZAK_DEPLOY_UID/GID, not ${UID}/${GID}: bash has no GID at all and does
+    # not export UID, so compose would interpolate `1000:` and docker would refuse.
+    # Without this the dumps land root-owned and rotation under the deploy user breaks.
+    user: '${ZAK_DEPLOY_UID:-0}:${ZAK_DEPLOY_GID:-0}'
+    env_file:
+      - ../.env.production
+    environment:
+      # DATABASE_URL already carries sslmode=verify-full but no sslrootcert, so libpq
+      # would look under $HOME — and this container has no /etc/passwd entry for the
+      # UID above, so $HOME collapses to / and the dump dies on a missing CA.
+      # DATABASE_SSL_CA is no help here: only our loadEnv.ts reads it, never libpq.
+      # NB: the app reaches the DB via postgres.js `ssl` object (which ignores the
+      # URL's sslmode); pg_dump reaches it via libpq. Two different TLS paths on
+      # purpose — do not "unify" them.
+      PGSSLROOTCERT: /app/certs/yandex-root.crt
+      PGSSLMODE: verify-full
+      PGCONNECT_TIMEOUT: '15'
+    volumes:
+      - ../certs/yandex-root.crt:/app/certs/yandex-root.crt:ro
+      - ${ZAK_BACKUP_DIR:-/var/lib/zakupki/deploy/db-backups}:/backups
+    command: ['pg_dump', '--version']
 
 volumes:
   zakupki-storage:

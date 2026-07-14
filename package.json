@@ -16,6 +16,8 @@
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @zakupki/db db:generate",
     "db:migrate": "pnpm --filter @zakupki/db db:migrate",
+    "db:migrate:status": "pnpm --silent --filter @zakupki/db db:migrate:status",
+    "db:migrate:check": "pnpm --silent --filter @zakupki/db db:migrate:check",
     "db:seed": "pnpm --filter @zakupki/db db:seed",
     "db:reset": "pnpm --filter @zakupki/db db:reset"
   },

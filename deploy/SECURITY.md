@@ -27,17 +27,28 @@ deploy/vps.sh scp-down REMOTE LOCAL       # выгрузка файла
 
 ## 1. Secrets never appear in commands or output
 
-- Secrets live **only** in root-only files outside the repo:
-  - Local machine: `/root/.config/zakupki/vps.env` (chmod 600) — SSH creds.
-  - VPS: `/etc/zakupki/zakupki.env` (chmod 640, owner `zakupki`) — app env.
+- Secrets live **only** in files outside git:
+  - Local machine: `/root/.config/zakupki/vps.env` (chmod 600, root-only) — SSH creds.
+  - VPS: `/opt/portals/zakupki/.env.production` (chmod 600, owner `corpsu`) — app env,
+    подаётся в контейнеры через compose `env_file`.
 - **Never** `cat`, `echo`, `printf`, or `env` a file/variable that contains a
   secret (DB password, JWT secrets, SSH passphrase, SMTP/DaData tokens).
 - To inspect a secret file, check **keys only**, never values, e.g.
   `grep -oE '^[A-Z_]+=' file` or `cut -d= -f1`.
-- When a command needs a secret, pass it via env/`SSH_ASKPASS`/`EnvironmentFile`
+- When a command needs a secret, pass it via env/`SSH_ASKPASS`/`env_file`
   — never as a command-line argument (argv is visible in `ps`).
 - Connect with `deploy/vps.sh`, which loads the key passphrase through
   `SSH_ASKPASS` so it never reaches argv or output.
+
+**Принятое исключение — `pg_dump`/`pg_restore`.** `deploy-zak` вызывает их как
+`sh -c "pg_dump --dbname=\"\$DATABASE_URL\" …"`, то есть переменная раскрывается
+**внутри** контейнера (на хосте в argv `docker compose run` секрета нет), но развёрнутый
+URL виден в argv процесса внутри контейнера — а значит, root'у хоста через `/proc` на
+время дампа. Это осознанно принято: тот, кто имеет root на хосте, и так читает
+`.env.production`, дополнительной поверхности не возникает. Обойти через `PGDATABASE`
+нельзя — libpq раскрывает URI только у явного ключа `dbname`, а `PGDATABASE`
+подставляется как default уже после раскрытия, и подключение уходит в дефолтный сокет
+(проверено).
 
 ## 2. `.env` / certs / keys are never committed
 
@@ -49,17 +60,53 @@ deploy/vps.sh scp-down REMOTE LOCAL       # выгрузка файла
 
 ## 3. Do no harm to other sites on the VPS
 
-- **Back up first**: nginx config, systemd units, and any file touched are copied
-  to a timestamped backup dir before edits (see the deploy plan / `PLAN.md`).
-- The portal runs as a **dedicated unprivileged user** (`zakupki`) in its own
-  home; it does not touch other apps' files, ports, or containers.
-- Add a **new** nginx server block for `zak.su10.ru` only — never edit another
-  site's block. Always `nginx -t` before `systemctl reload nginx`.
-- Pick a free upstream port (default `127.0.0.1:3000`; verify it's unused first).
-- Prefer additive `systemctl enable/start` of the new unit; never stop/restart
-  services you did not create.
+Архитектура — Docker Compose за общим контейнером `infra-nginx` (хостового nginx и
+systemd-юнитов у портала **нет**, портов наружу тоже: доступ только через `infra-nginx`
+в сети `edge`). Портал живёт в `/opt/portals/zakupki` под `corpsu` — тем же владельцем,
+что у соседей `estimat`/`billhub`; контейнер API работает под `node`.
 
-## 4. Session hygiene
+- **Back up first**: `deploy-zak` снимает снимок конфига перед каждой изменяющей
+  операцией; инфра-бэкап до первичного развёртывания — `zakupki-deploy-backups/<ts>`.
+- Работать **только со своим** compose-проектом: `docker compose -p zakupki …`. Никогда
+  не останавливать и не пересоздавать контейнеры, которые вы не создавали.
+- Добавлять **новый** vhost `zak.su10.ru` в `/opt/infra/nginx/conf.d/` — никогда не
+  редактировать блоки соседей. Всегда `docker exec infra-nginx nginx -t` перед
+  `nginx -s reload`.
+- **Категорически запрещены `docker image prune -a`, `docker system prune`** и удаление
+  чужих образов, volume'ов и сетей: они снесут образы без постоянно запущенных
+  контейнеров (`certbot/certbot`, `keycloak-config-cli`, `curlimages/curl`) и сломают
+  соседей. Чистить только по белому списку: `docker rmi zakupki-api:<tag>` /
+  `zakupki-web:<tag>`.
+- Исключение, требующее осознанности: `docker builder prune --filter until=…` — кэш
+  BuildKit **общий** для всех порталов хоста. Чистка старого кэша ничего не ломает
+  (лишь замедляет ближайшую чужую сборку), но это единственная операция `deploy-zak`,
+  выходящая за границы портала. Отключается `--no-prune`.
+
+## 4. Дампы и снимки конфига содержат секреты
+
+`deploy-zak` создаёт в `/var/lib/zakupki/deploy/`:
+
+- `db-backups/` (chmod 700; файлы 600) — `pg_dump -Fc` полной базы: **персональные данные
+  и хэши паролей/токенов**. Не выносить наружу в открытом виде, не класть в репозиторий,
+  не прикреплять к тикетам.
+- `config-backups/` (chmod 700; файлы 600) — tar.gz с `.env.production`, то есть **все
+  прод-секреты** в одном файле. Тот же режим обращения.
+
+Права выставляет сам скрипт (`umask 077` + явный `chmod`), а `db-tools` работает под UID
+деплой-пользователя, чтобы дампы не оказались root-owned. Проверять после операций:
+`ls -l /var/lib/zakupki/deploy/db-backups`.
+
+## 5. Dev и prod могут смотреть в одну базу
+
+`deploy/make-prod-env.sh` копирует `DATABASE_URL` из локального `.env` в
+`.env.production` **дословно**. Если локальный `.env` указывает на управляемый кластер
+Yandex (порт `6432`), то `pnpm db:reset` — а он начинается с `DROP SCHEMA public CASCADE` —
+**уничтожит продовую схему с локальной машины**. Перед любым `db:reset`/`db:seed`
+убедитесь, что `DATABASE_URL` указывает на локальный PostgreSQL. Интеграционные тесты
+раннера миграций запускать только против одноразовой БД с **явно заданным** URL, никогда
+против ambient `.env`. Разделение dev/prod баз — открытая задача.
+
+## 6. Session hygiene
 
 - Keep the number of concurrent SSH sessions low (avoid tripping fail2ban / rate
   limits). Reuse one connection where possible.

@@ -76,6 +76,14 @@ pnpm db:seed
 pnpm dev
 ```
 
+> ⚠️ **Проверьте, куда указывает ваш `DATABASE_URL`, прежде чем запускать `db:reset`.**
+> `deploy/make-prod-env.sh` копирует `DATABASE_URL` из локального `.env` в
+> `.env.production` **дословно**, поэтому легко оказаться в ситуации, когда dev и prod
+> ходят в одну управляемую базу Yandex (порт `6432`, `sslmode=verify-full`).
+> `db:reset` начинается с `DROP SCHEMA public CASCADE` — против такой базы он уничтожит
+> продовые данные. Для локальной разработки `DATABASE_URL` должен указывать на
+> **свой** PostgreSQL на `localhost:5432` (шаг 2 выше).
+
 Откройте **http://localhost:5173**. Vite проксирует `/api` на бэкенд (:3000), поэтому cookie
 работают в одном origin.
 
@@ -100,9 +108,16 @@ pnpm dev
 | `pnpm dev` | api + web в режиме разработки |
 | `pnpm build` | сборка всех пакетов |
 | `pnpm test` | unit-тесты (vitest) |
-| `pnpm db:migrate` | применить SQL-миграции |
+| `pnpm db:migrate` | применить новые SQL-миграции (уже применённые пропускаются) |
+| `pnpm db:migrate:status` | показать applied/pending/missing одной строкой JSON |
+| `pnpm db:migrate:check` | код возврата: `0` — чисто, `3` — есть pending, `1` — сбой |
 | `pnpm db:seed` | загрузить демо-данные |
-| `pnpm db:reset` | пересоздать схему + сид |
+| `pnpm db:reset` | **DROP SCHEMA public CASCADE** + миграции + сид (см. предупреждение выше) |
+
+Миграции учитываются по имени файла в таблице `public._migrations`; накат каждого файла и
+отметка о нём идут одной транзакцией, а весь прогон держит advisory-лок, поэтому два
+параллельных `db:migrate` не столкнутся. Уже применённый файл **править нельзя** — раннер
+сверяет только имена, и правка будет молча проигнорирована. Изменения вносятся новым файлом.
 
 ## Production / VPS
 
@@ -120,7 +135,7 @@ zakupki-api ──SSL verify-full──▶ Yandex Managed PostgreSQL (внешн
 
 Артефакты деплоя — в [`deploy/`](deploy/): `Dockerfile.api`, `Dockerfile.web`,
 `web-nginx.conf`, `docker-compose.yml`, `conf.d/zakupki.conf` (vhost для infra-nginx),
-`.env.production.example`, `deploy.sh`, `make-prod-env.sh`. Подробный план и разведка
+`.env.production.example`, `deploy-zak.sh`, `make-prod-env.sh`. Подробный план и разведка
 хоста — [`deploy/PLAN.md`](deploy/PLAN.md); правила работы с секретами —
 [`deploy/SECURITY.md`](deploy/SECURITY.md).
 
@@ -145,9 +160,11 @@ CA-сертификат Yandex («Internal Root CA») кладётся на се
 ### Подготовка PostgreSQL
 
 Расширения **`citext`** и **`pgcrypto`** должны быть включены **заранее** (в Yandex Console
-→ кластер → Extensions, либо `CREATE EXTENSION`). Миграции их не создают.
+→ кластер → Extensions). `0000_init.sql` содержит `CREATE EXTENSION IF NOT EXISTS`, но на
+Managed PostgreSQL у обычного пользователя нет прав на создание расширений, поэтому
+включить их через Console всё равно обязательно.
 
-### Порядок деплоя
+### Порядок первичного развёртывания
 
 ```bash
 # 0. (локально) закоммитить+запушить изменения; сгенерировать прод-env без утечки секретов:
@@ -163,11 +180,13 @@ git clone https://github.com/hoperlex/zakupki.git /opt/portals/zakupki
 #    → /opt/portals/zakupki/certs/yandex-root.crt
 #    (напр. одной командой: tar транспорт из локали, см. deploy/PLAN.md)
 
-# 3. (VPS) сборка + миграции (без reset) + запуск
-sudo bash deploy/deploy.sh
-#   = docker compose -f deploy/docker-compose.yml -p zakupki build
-#     docker compose ... run --rm api pnpm --filter @zakupki/db db:migrate
-#     docker compose ... up -d api web
+# 3. (VPS, разово) подключить команду deploy-zak
+sudo ln -sfn /opt/portals/zakupki/deploy/deploy-zak.sh /usr/local/bin/deploy-zak
+
+# 3a. (VPS) сборка + миграции (без reset) + запуск
+sudo deploy-zak --migrate
+#   Первый запуск обязан быть с --migrate: pending-миграции есть, и без флага
+#   deploy-zak откажется выкатывать код (guard срабатывает ДО смены контейнеров).
 
 # 4. (VPS, разово) TLS-сертификат через СУЩЕСТВУЮЩИЙ infra-certbot (ACME webroot).
 #    ACME-challenge обслуживает default-сервер, пока vhost не добавлен.
@@ -182,12 +201,80 @@ sudo docker exec infra-nginx nginx -t && sudo docker exec infra-nginx nginx -s r
 curl -fsS https://zak.su10.ru/api/v1/health   # {"status":"ok",...}
 ```
 
-Опциональные демо-данные (`pnpm db:seed`) — только для стенда, **не для прод**.
-Деструктивный `db:reset` в прод **не запускается**.
+### Эксплуатация: `deploy-zak`
 
-> Это контролируемый single-VPS deploy для MVP (git pull → build на хосте). Обновление
-> портала не трогает `infra-nginx` и соседние сайты; откат — `docker compose -p zakupki down`
-> + удалить `zakupki.conf` из `conf.d` и `nginx -s reload`.
+Единственный поддерживаемый способ обновлять портал. Работает из любого каталога
+(команда якорится на реальном расположении скрипта, а не на текущей папке).
+Не трогает `infra-nginx`, Keycloak и соседние порталы.
+
+| Команда | Что делает |
+|---|---|
+| `deploy-zak` | `git pull` → сборка образов с тегом commit-SHA → проверка миграций → `up -d` → health |
+| `deploy-zak --migrate` | то же + дамп БД + накат **только новых** миграций |
+| `deploy-zak --migrate --maintenance` | миграции в окне обслуживания: стоп API до дампа (RPO = 0) |
+| `deploy-zak --previous` | откат кода на предыдущий commit-SHA без пересборки, за секунды |
+| `deploy-zak --previous --restore-db` | согласованный откат кода и БД |
+| `deploy-zak --restore-db[=файл]` | восстановление БД из дампа (destructive) |
+| `deploy-zak --restore-config[=архив]` | восстановление `.env.production` и CA из снимка |
+| `deploy-zak --status` | read-only сводка: релизы, образы, миграции, бэкапы, диск |
+| `deploy-zak --help` | справка по всем флагам |
+
+Обычное обновление — просто `deploy-zak` (или `deploy-zak --migrate`, если в коммитах
+есть новые миграции; без флага скрипт сам откажется выкатываться и скажет об этом).
+
+**Модель релизов.** Образы тегируются коротким commit-SHA; `:latest` — подвижный алиас
+на последний релиз, прошедший health. Состояние — в `/var/lib/zakupki/deploy/release.state`
+(`current`/`previous`). Поэтому `--previous` — это переключение тега без пересборки.
+Повторный `--previous` возвращает обратно.
+
+**Состояние и бэкапы** — `/var/lib/zakupki/deploy/` (каталог создаётся автоматически при
+первом запуске от root):
+
+```
+release.state       current/previous — какие SHA запущены
+config-backups/     700; снимки .env.production + CA + vhost (600) — СЕКРЕТЫ
+db-backups/         700; предмиграционные дампы pg_dump -Fc (600) — ПДн и хэши паролей
+reports/            JSON-отчёт на каждый запуск (кто, что, результат)
+deploy.lock         flock от параллельных запусков
+```
+
+> **Не путать** с `STORAGE_ROOT=/var/lib/zakupki/storage` — тот путь живёт **внутри**
+> контейнера (volume `zakupki-storage`) и к каталогу состояния отношения не имеет.
+
+**Ретеншн** (чтобы бэкапы и образы не съели диск — он общий со всеми порталами хоста):
+3 SHA-тега на образ, 3 предмиграционных дампа, 1 аварийный, 10 снимков конфига,
+BuildKit-кэш старше 14 суток (при заполнении ≥85% — старше 72 ч). Отключается `--no-prune`.
+Если свободно меньше 8 ГБ, деплой сначала чистит, а затем перепроверяет — и отказывается
+собирать, если места так и не хватило.
+
+**Что нужно знать про откат:**
+
+- `--previous` откатывает **код, но не схему БД**. Если новый код принёс несовместимую
+  миграцию — нужен `--previous --restore-db`.
+- Дамп БД **не покрывает загруженные документы** (volume `zakupki-storage`). После
+  `--restore-db` ссылки в БД и файлы на диске могут разойтись: RPO файлов ≠ RPO базы.
+- RPO дампа = момент его снятия. При обычном `--migrate` API продолжает принимать записи,
+  и они потеряются при восстановлении; `--maintenance` останавливает API заранее и даёт
+  нулевой RPO.
+- Журнал `_migrations` восстанавливается вместе со схемой, поэтому после `--restore-db`
+  следующий деплой накатит миграции заново.
+- `--restore-db` и `--restore-config` требуют интерактивного терминала (подтверждение
+  читается с `/dev/tty`).
+
+**Прочее:**
+
+- Health проверяется изнутри контейнера с ретраями. Провал health **не** откатывает
+  автоматически: он оставляет `:latest` на прошлом здоровом релизе, возвращает ненулевой
+  код и печатает `deploy-zak --previous`. Решение принимает человек — авто-откат после
+  применённой миграции дал бы непроверенную связку «старый код + новая схема».
+- Короткие 502 (до 30 с) при пересоздании контейнеров — ожидаемы: vhost резолвит имена
+  через `resolver … valid=30s`.
+- Правки самого `deploy-zak.sh` вступают в силу со **следующего** запуска: git подменяет
+  файл через rename, а запущенный bash дочитывает старый inode.
+
+Опциональные демо-данные (`pnpm db:seed`) — только для стенда, **не для прод**.
+Деструктивный `db:reset` в прод **не запускается** — и не только в прод, см. предупреждение
+в начале раздела «Разработка».
 
 ## Как это работает (ключевые решения)
 
