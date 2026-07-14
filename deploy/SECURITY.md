@@ -5,6 +5,26 @@ zakupki deployment. The overriding goals: **never leak a secret into the
 chat/transcript or shell history**, and **never disturb other production sites
 on the shared VPS**.
 
+## 0. Подключение к VPS
+
+Подключаться **только** через `deploy/vps.sh` (secret-safe — passphrase грузится через
+`SSH_ASKPASS`, не попадает в argv/вывод):
+
+```bash
+deploy/vps.sh check                       # проверка связи
+deploy/vps.sh ssh '<remote cmd>'          # команда на ВМ
+deploy/vps.sh ssh 'bash -s' < script.sh   # прогнать скрипт (без мучений с кавычками)
+deploy/vps.sh scp-up  LOCAL  REMOTE       # загрузка файла
+deploy/vps.sh scp-down REMOTE LOCAL       # выгрузка файла
+```
+
+Креды живут **вне репо**, в root-only `/root/.config/zakupki/vps.env` (chmod 600):
+`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KEY_PASSPHRASE`
+(шаблон — `deploy/vps.env.example`). Ключ ED25519 с passphrase; рядом с приватным ключом
+должен лежать `.pub` (обёртка создаёт его из ssh-agent при необходимости) — иначе
+`IdentitiesOnly=yes` не сопоставит ключ и будет «Permission denied (publickey)».
+Первый вызов после ребута сам перегружает ключ в agent из сохранённого passphrase.
+
 ## 1. Secrets never appear in commands or output
 
 - Secrets live **only** in root-only files outside the repo:

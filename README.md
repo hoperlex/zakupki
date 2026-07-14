@@ -153,25 +153,26 @@ CA-сертификат Yandex («Internal Root CA») кладётся на се
 # 0. (локально) закоммитить+запушить изменения; сгенерировать прод-env без утечки секретов:
 deploy/make-prod-env.sh .env deploy/.env.production.out   # значения не печатаются
 
-# 1. (VPS) получить код
-sudo git clone <repo> /opt/portals/zakupki   # или: cd /opt/portals/zakupki && sudo git pull
+# 1. (VPS) получить код (репозиторий публичный — clone по HTTPS, без ключей)
+sudo install -d -o corpsu -g corpsu /opt/portals/zakupki
+git clone https://github.com/hoperlex/zakupki.git /opt/portals/zakupki
+#   обновление позже:  cd /opt/portals/zakupki && git pull
 
-# 2. (VPS) секреты и CA — копируются отдельно по ssh (secret-safe):
-#    scp .env.production.out  → /opt/portals/zakupki/.env.production   (chmod 600)
-#    scp CA (temp/root.crt)   → /opt/portals/zakupki/certs/yandex-root.crt
+# 2. (VPS) секреты и CA — копируются отдельно по ssh (secret-safe, значения не светятся):
+#    → /opt/portals/zakupki/.env.production       (chmod 600)
+#    → /opt/portals/zakupki/certs/yandex-root.crt
+#    (напр. одной командой: tar транспорт из локали, см. deploy/PLAN.md)
 
 # 3. (VPS) сборка + миграции (без reset) + запуск
 sudo bash deploy/deploy.sh
-#   = docker compose -p zakupki build
-#     docker compose -p zakupki run --rm api pnpm --filter @zakupki/db db:migrate
-#     docker compose -p zakupki up -d api web
+#   = docker compose -f deploy/docker-compose.yml -p zakupki build
+#     docker compose ... run --rm api pnpm --filter @zakupki/db db:migrate
+#     docker compose ... up -d api web
 
-# 4. (VPS, разово) TLS-сертификат через существующий certbot (ACME webroot)
-sudo docker run --rm \
-  -v /opt/infra/nginx/certbot/conf:/etc/letsencrypt \
-  -v /opt/infra/nginx/certbot/www:/var/www/certbot \
-  certbot/certbot certonly --webroot -w /var/www/certbot \
-  -d zak.su10.ru --email admin@su10.ru --agree-tos --no-eff-email
+# 4. (VPS, разово) TLS-сертификат через СУЩЕСТВУЮЩИЙ infra-certbot (ACME webroot).
+#    ACME-challenge обслуживает default-сервер, пока vhost не добавлен.
+sudo docker exec infra-certbot certbot certonly --webroot -w /var/www/certbot \
+  -d zak.su10.ru --non-interactive --agree-tos --no-eff-email --email admin@su10.ru
 
 # 5. (VPS, разово) подключить vhost к общему nginx и перечитать конфиг
 sudo cp deploy/conf.d/zakupki.conf /opt/infra/nginx/conf.d/zakupki.conf
