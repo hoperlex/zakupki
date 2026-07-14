@@ -9,6 +9,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { env } from './config/env';
+import { registerApiKey } from './plugins/apiKey';
 import { registerAuth } from './plugins/auth';
 import { registerCsrf } from './plugins/csrf';
 import { registerDb } from './plugins/db';
@@ -46,6 +47,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   registerDb(app);
   await registerAuth(app);
+  // после registerDb — плагин ходит в app.db; до routes — маршруты используют requireApiKey
+  registerApiKey(app);
   registerCsrf(app);
 
   await app.register(routes, { prefix: '/api/v1' });

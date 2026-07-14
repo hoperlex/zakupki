@@ -8,3 +8,4 @@ export * from './dto/bid';
 export * from './dto/invitation';
 export * from './dto/accreditation';
 export * from './dto/notification';
+export * from './dto/external';

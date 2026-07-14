@@ -23,7 +23,7 @@ import { bus } from '../../lib/events';
 import { notifyOrg } from '../../lib/notify';
 import { env } from '../../config/env';
 import { hasInvitationAccess } from '../invitations/service';
-import type { Viewer } from '../tenders/service';
+import { bumpRevision, type Viewer } from '../tenders/service';
 
 /** The user's CURRENT organization (JWT orgId can be stale right after the org is created). */
 async function currentOrgId(db: Database, userId: string): Promise<string | null> {
@@ -291,7 +291,12 @@ export async function submitBid(
         const newDeadline = new Date(tender.deadlineAt.getTime() + tender.autoExtendStepSec * 1000);
         await tx
           .update(tenders)
-          .set({ deadlineAt: newDeadline, extendCount: tender.extendCount + 1, updatedAt: now })
+          .set({
+            deadlineAt: newDeadline,
+            extendCount: tender.extendCount + 1,
+            updatedAt: now,
+            revision: bumpRevision(),
+          })
           .where(eq(tenders.id, tenderId));
         triggeredExtension = true;
       }
@@ -330,9 +335,19 @@ export async function submitBid(
 export async function withdrawBid(db: Database, tenderId: string, viewer: Viewer): Promise<void> {
   const orgId = await currentOrgId(db, viewer.userId);
   if (!orgId) throw badRequest('Нет организации');
-  const bid = await loadMyBid(db, tenderId, orgId);
-  if (!bid) throw notFound('Предложение не найдено');
   await db.transaction(async (tx) => {
+    // Блокируем тендер и проверяем стадию под локом — как в submitBid. Без этого
+    // ставку можно отозвать уже ПОСЛЕ выбора победителя: awarded_bid_id остался бы
+    // указывать на отозванную ставку, и внешние /results отдали бы победителя,
+    // которого нет ни в participants[], ни в bids[]. Отзыв допустим только в приём.
+    const [tender] = await tx.select().from(tenders).where(eq(tenders.id, tenderId)).for('update');
+    if (!tender) throw notFound('Тендер не найден');
+    if (tender.status !== 'collecting' || tender.deadlineAt < new Date()) {
+      throw conflict('Отозвать предложение можно только до окончания приёма');
+    }
+    const bid = await loadMyBid(tx, tenderId, orgId);
+    if (!bid) throw notFound('Предложение не найдено');
+
     await tx.update(bids).set({ status: 'withdrawn', rank: null, isBest: false }).where(eq(bids.id, bid.id));
     await tx.execute(sql`
       UPDATE bids b SET rank = r.rn, is_best = (r.rn = 1)
@@ -400,7 +415,10 @@ export async function getProtocolHtml(
   if (!tender) throw notFound('Тендер не найден');
   if (viewer.role !== 'admin' && tender.organizationId !== viewer.orgId) throw forbidden('Нет доступа');
   const rows = await getComparison(db, tenderId, viewer);
-  const winner = rows.find((r) => r.bidId === tender.awardedBidId) ?? rows[0];
+  // Победитель — только явно выбранный. Прежний fallback на rows[0] печатал
+  // самого дешёвого участника победителем даже там, где его не выбирали
+  // (тендер завершён без победителя) — это ложный протокол.
+  const winner = tender.awardedBidId ? rows.find((r) => r.bidId === tender.awardedBidId) : undefined;
 
   const rowsHtml = rows
     .map(
@@ -415,13 +433,20 @@ export async function getProtocolHtml(
   <style>body{font-family:Arial,sans-serif;color:#1E1D1D;max-width:900px;margin:32px auto;padding:0 24px}
   h1{color:#A05850;border-bottom:3px solid #A05850;padding-bottom:8px}
   table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #E4E5E9;padding:8px}
-  th{background:#F9F9FA;text-align:left}.win{background:#A05850;color:#fff;padding:12px 16px;border-radius:8px;margin:16px 0}</style></head>
+  th{background:#F9F9FA;text-align:left}.win{background:#A05850;color:#fff;padding:12px 16px;border-radius:8px;margin:16px 0}
+  .no-win{background:#F9F9FA;border:1px solid #E4E5E9;padding:12px 16px;border-radius:8px;margin:16px 0}</style></head>
   <body>
   <h1>Протокол подведения итогов</h1>
   <p><b>Тендер:</b> ${esc(tender.number)} — ${esc(tender.title)}</p>
   <p><b>Заказчик:</b> ${esc(tender.organization?.fullName ?? '')}</p>
   <p><b>Статус:</b> ${tender.status}</p>
-  ${winner ? `<div class="win">Победитель: ${esc(winner.supplierName)} (ИНН ${esc(winner.supplierInn)}) — ${winner.totalWithVat} ₽ с НДС</div>` : ''}
+  ${
+    winner
+      ? `<div class="win">Победитель: ${esc(winner.supplierName)} (ИНН ${esc(winner.supplierInn)}) — ${winner.totalWithVat} ₽ с НДС</div>`
+      : tender.status === 'closed'
+        ? `<div class="no-win">Победитель не определён. Причина: ${esc(tender.closeReason ?? 'не указана')}</div>`
+        : ''
+  }
   <h3>Сводная таблица предложений</h3>
   <table><thead><tr><th>Место</th><th>Поставщик</th><th>ИНН</th><th>Без НДС</th><th>НДС</th><th>С НДС</th></tr></thead>
   <tbody>${rowsHtml}</tbody></table>
@@ -435,23 +460,40 @@ export async function awardTender(
   viewer: Viewer,
   bidId: string,
 ): Promise<void> {
-  const tender = await db.query.tenders.findFirst({ where: eq(tenders.id, tenderId) });
-  if (!tender) throw notFound('Тендер не найден');
-  if (viewer.role !== 'admin' && tender.organizationId !== viewer.orgId) {
-    throw forbidden('Нет доступа к тендеру');
-  }
-  if (!['collecting', 'under_review'].includes(tender.status)) {
-    throw conflict('Определить победителя можно только по завершении приёма');
-  }
-  const bid = await db.query.bids.findFirst({ where: and(eq(bids.id, bidId), eq(bids.tenderId, tenderId)) });
-  if (!bid) throw notFound('Предложение не найдено');
+  const tender = await db.transaction(async (tx) => {
+    const [t] = await tx.select().from(tenders).where(eq(tenders.id, tenderId)).for('update');
+    if (!t) throw notFound('Тендер не найден');
+    if (viewer.role !== 'admin' && t.organizationId !== viewer.orgId) {
+      throw forbidden('Нет доступа к тендеру');
+    }
+    // Только under_review: award на 'collecting' объявил бы победителя до конца
+    // приёма — внешний клиент увидел бы итог, пока ставки ещё принимаются.
+    if (t.status !== 'under_review') {
+      throw conflict('Определить победителя можно только по завершении приёма');
+    }
+    // Отозванную ставку выбрать победителем нельзя: наружу ушёл бы фиктивный winner.
+    const bid = await tx.query.bids.findFirst({
+      where: and(eq(bids.id, bidId), eq(bids.tenderId, tenderId), ne(bids.status, 'withdrawn')),
+    });
+    if (!bid) throw notFound('Предложение не найдено');
 
-  await db
-    .update(tenders)
-    .set({ status: 'awarded', awardedBidId: bidId, updatedAt: new Date() })
-    .where(eq(tenders.id, tenderId));
+    const now = new Date();
+    await tx
+      .update(tenders)
+      .set({
+        status: 'awarded',
+        awardedBidId: bidId,
+        finishedAt: now,
+        updatedAt: now,
+        revision: bumpRevision(),
+      })
+      .where(eq(tenders.id, tenderId));
+    return { ...t, supplierOrgId: bid.supplierOrgId };
+  });
 
-  await notifyOrg(db, bid.supplierOrgId, {
+  bus.emitTenderChanged(tenderId, 'status');
+
+  await notifyOrg(db, tender.supplierOrgId, {
     type: 'award',
     title: `Вы победили в тендере ${tender.number}`,
     body: `Ваше предложение по тендеру «${tender.title}» выбрано победителем. С вами свяжется менеджер закупок.`,

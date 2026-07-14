@@ -17,8 +17,11 @@ import {
   tenders,
   users,
   type Database,
+  type DbClient,
+  type Transaction,
 } from '@zakupki/db';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors';
+import { bus } from '../../lib/events';
 import { hasInvitationAccess } from '../invitations/service';
 
 export interface Viewer {
@@ -26,6 +29,23 @@ export interface Viewer {
   role: Role;
   orgId: string | null;
 }
+
+/** Происхождение тендера из внешней системы (машинный API). */
+export interface TenderSource {
+  sourceSystem: string;
+  externalRef: string;
+  sourceRevision: number | null;
+  sourcePayloadHash: string;
+  sourceApiKeyId: string | null;
+}
+
+/**
+ * Инкремент монотонной ревизии состояния. Внешний клиент применяет только
+ * более новое состояние, поэтому каждый переход жизненного цикла обязан
+ * двигать revision: публикация, смена/автопродление дедлайна, переход по
+ * дедлайну, отмена, award, закрытие без победителя.
+ */
+export const bumpRevision = () => sql`${tenders.revision} + 1`;
 
 const PUBLIC_STATUSES = ['published', 'collecting', 'under_review', 'awarded', 'closed'] as const;
 
@@ -229,10 +249,21 @@ async function computeCanBid(
 
 // ─── manager operations ───
 
-async function nextTenderNumber(db: Database): Promise<string> {
+/** Произвольная, но стабильная константа пространства блокировки номеров тендеров. */
+const TENDER_NUMBER_LOCK = 774_201;
+
+/**
+ * Следующий номер тендера за текущий год.
+ *
+ * Только внутри транзакции: max+1 без блокировки даёт двум параллельным
+ * созданиям один номер (и падение на tenders_number_uq). Advisory-lock
+ * сериализует их и снимается вместе с транзакцией.
+ */
+async function nextTenderNumberTx(tx: Transaction): Promise<string> {
   const year = new Date().getFullYear();
+  await tx.execute(sql`select pg_advisory_xact_lock(${TENDER_NUMBER_LOCK}::int4, ${year}::int4)`);
   const prefix = `T-${year}-`;
-  const rows = await db
+  const rows = await tx
     .select({ number: tenders.number })
     .from(tenders)
     .where(ilike(tenders.number, `${prefix}%`));
@@ -244,60 +275,78 @@ async function nextTenderNumber(db: Database): Promise<string> {
   return `${prefix}${String(max + 1).padStart(5, '0')}`;
 }
 
+/**
+ * Вставка тендера с позициями внутри ЧУЖОЙ транзакции — чтобы вызывающий мог
+ * доклеить к ней публикацию и не оставить полуфабрикат при сбое.
+ * `source` заполняется только машинным API.
+ */
+export async function insertTenderTx(
+  tx: Transaction,
+  input: CreateTenderInput,
+  viewer: Viewer,
+  source?: TenderSource,
+): Promise<{ id: string; number: string }> {
+  if (!viewer.orgId) throw badRequest('У пользователя не указана организация');
+  const number = await nextTenderNumberTx(tx);
+  const deadline = new Date(input.deadlineAt);
+  const startsAt = input.startsAt ? new Date(input.startsAt) : null;
+  const [tender] = await tx
+    .insert(tenders)
+    .values({
+      number,
+      title: input.title,
+      type: input.type,
+      visibility: input.visibility,
+      status: 'draft',
+      categoryId: input.categoryId ?? null,
+      organizationId: viewer.orgId,
+      createdBy: viewer.userId,
+      description: input.description ?? null,
+      terms: input.terms ?? null,
+      expectedVatRate: input.expectedVatRate,
+      minStepPct: input.minStepPct ?? null,
+      minStepAbs: input.minStepAbs ?? null,
+      startsAt,
+      deadlineAt: deadline,
+      originalDeadlineAt: deadline,
+      autoExtendEnabled: input.autoExtendEnabled,
+      autoExtendWindowSec: input.autoExtendWindowSec,
+      autoExtendStepSec: input.autoExtendStepSec,
+      autoExtendMaxCount: input.autoExtendMaxCount,
+      sourceSystem: source?.sourceSystem ?? null,
+      externalRef: source?.externalRef ?? null,
+      sourceRevision: source?.sourceRevision ?? null,
+      sourcePayloadHash: source?.sourcePayloadHash ?? null,
+      sourceApiKeyId: source?.sourceApiKeyId ?? null,
+    })
+    .returning({ id: tenders.id, number: tenders.number });
+  await tx.insert(tenderPositions).values(
+    input.positions.map((p) => ({
+      tenderId: tender!.id,
+      positionNo: p.positionNo,
+      name: p.name,
+      categoryId: p.categoryId ?? null,
+      unit: p.unit,
+      quantity: p.quantity,
+      spec: p.spec ?? null,
+      isRequired: p.isRequired,
+      targetPrice: p.targetPrice ?? null,
+      sourceUnit: p.sourceUnit ?? null,
+    })),
+  );
+  return { id: tender!.id, number: tender!.number };
+}
+
 export async function createTender(
   db: Database,
   input: CreateTenderInput,
   viewer: Viewer,
 ): Promise<string> {
-  if (!viewer.orgId) throw badRequest('У пользователя не указана организация');
-  const number = await nextTenderNumber(db);
-  const deadline = new Date(input.deadlineAt);
-  const startsAt = input.startsAt ? new Date(input.startsAt) : null;
-  const id = await db.transaction(async (tx) => {
-    const [tender] = await tx
-      .insert(tenders)
-      .values({
-        number,
-        title: input.title,
-        type: input.type,
-        visibility: input.visibility,
-        status: 'draft',
-        categoryId: input.categoryId ?? null,
-        organizationId: viewer.orgId!,
-        createdBy: viewer.userId,
-        description: input.description ?? null,
-        terms: input.terms ?? null,
-        expectedVatRate: input.expectedVatRate,
-        minStepPct: input.minStepPct ?? null,
-        minStepAbs: input.minStepAbs ?? null,
-        startsAt,
-        deadlineAt: deadline,
-        originalDeadlineAt: deadline,
-        autoExtendEnabled: input.autoExtendEnabled,
-        autoExtendWindowSec: input.autoExtendWindowSec,
-        autoExtendStepSec: input.autoExtendStepSec,
-        autoExtendMaxCount: input.autoExtendMaxCount,
-      })
-      .returning({ id: tenders.id });
-    await tx.insert(tenderPositions).values(
-      input.positions.map((p) => ({
-        tenderId: tender!.id,
-        positionNo: p.positionNo,
-        name: p.name,
-        categoryId: p.categoryId ?? null,
-        unit: p.unit,
-        quantity: p.quantity,
-        spec: p.spec ?? null,
-        isRequired: p.isRequired,
-        targetPrice: p.targetPrice ?? null,
-      })),
-    );
-    return tender!.id;
-  });
+  const { id } = await db.transaction((tx) => insertTenderTx(tx, input, viewer));
   return id;
 }
 
-async function loadOwnedTender(db: Database, id: string, viewer: Viewer) {
+async function loadOwnedTender(db: DbClient, id: string, viewer: Viewer) {
   const tender = await db.query.tenders.findFirst({
     where: and(eq(tenders.id, id), isNull(tenders.deletedAt)),
   });
@@ -336,6 +385,8 @@ export async function updateTender(
     const dl = new Date(input.deadlineAt);
     patch.deadlineAt = dl;
     patch.originalDeadlineAt = dl;
+    // сдвиг дедлайна — значимое для внешнего клиента изменение состояния
+    patch.revision = bumpRevision();
   }
   if (input.startsAt !== undefined) patch.startsAt = input.startsAt ? new Date(input.startsAt) : null;
   await db.update(tenders).set(patch).where(eq(tenders.id, id));
@@ -364,17 +415,19 @@ export async function replacePositions(
         spec: p.spec ?? null,
         isRequired: p.isRequired,
         targetPrice: p.targetPrice ?? null,
+        sourceUnit: p.sourceUnit ?? null,
       })),
     );
   });
 }
 
-export async function publishTender(db: Database, id: string, viewer: Viewer): Promise<void> {
-  const tender = await loadOwnedTender(db, id, viewer);
+/** Публикация внутри чужой транзакции (см. insertTenderTx). */
+export async function publishTenderTx(tx: Transaction, id: string, viewer: Viewer): Promise<void> {
+  const tender = await loadOwnedTender(tx, id, viewer);
   if (tender.status !== 'draft' && tender.status !== 'published') {
     throw conflict('Тендер уже опубликован или завершён');
   }
-  const positionsCount = await db
+  const positionsCount = await tx
     .select({ n: sql<number>`count(*)`.mapWith(Number) })
     .from(tenderPositions)
     .where(eq(tenderPositions.tenderId, id))
@@ -383,9 +436,35 @@ export async function publishTender(db: Database, id: string, viewer: Viewer): P
 
   const now = new Date();
   const status = tender.startsAt && tender.startsAt > now ? 'published' : 'collecting';
-  await db
+  await tx
     .update(tenders)
-    .set({ status, publishedAt: now, updatedAt: now })
+    .set({ status, publishedAt: now, updatedAt: now, revision: bumpRevision() })
+    .where(eq(tenders.id, id));
+}
+
+export async function publishTender(db: Database, id: string, viewer: Viewer): Promise<void> {
+  await db.transaction((tx) => publishTenderTx(tx, id, viewer));
+}
+
+/** Отмена внутри чужой транзакции (см. cancelTender). */
+export async function cancelTenderTx(
+  tx: Transaction,
+  id: string,
+  viewer: Viewer,
+  reason?: string,
+): Promise<void> {
+  const tender = await loadOwnedTender(tx, id, viewer);
+  if (!['draft', 'published', 'collecting'].includes(tender.status)) {
+    throw conflict('Тендер нельзя отменить на текущей стадии');
+  }
+  await tx
+    .update(tenders)
+    .set({
+      status: 'cancelled',
+      closeReason: reason ?? null,
+      updatedAt: new Date(),
+      revision: bumpRevision(),
+    })
     .where(eq(tenders.id, id));
 }
 
@@ -395,12 +474,46 @@ export async function cancelTender(
   viewer: Viewer,
   reason?: string,
 ): Promise<void> {
-  const tender = await loadOwnedTender(db, id, viewer);
-  if (!['draft', 'published', 'collecting'].includes(tender.status)) {
-    throw conflict('Тендер нельзя отменить на текущей стадии');
-  }
-  await db
-    .update(tenders)
-    .set({ status: 'cancelled', closeReason: reason ?? null, updatedAt: new Date() })
-    .where(eq(tenders.id, id));
+  await db.transaction((tx) => cancelTenderTx(tx, id, viewer, reason));
+  bus.emitTenderChanged(id, 'status');
+}
+
+/**
+ * Завершение без победителя: under_review → closed с обязательной причиной.
+ * Без этого тендер без ставок (или без выбора) висит «на рассмотрении» вечно,
+ * а внешний клиент никогда не получает исход.
+ */
+export async function closeTenderWithoutAward(
+  db: Database,
+  id: string,
+  viewer: Viewer,
+  reason: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    // строчная блокировка: award и закрытие не должны разъехаться
+    const [tender] = await tx
+      .select()
+      .from(tenders)
+      .where(and(eq(tenders.id, id), isNull(tenders.deletedAt)))
+      .for('update');
+    if (!tender) throw notFound('Тендер не найден');
+    if (viewer.role !== 'admin' && tender.organizationId !== viewer.orgId) {
+      throw forbidden('Нет доступа к этому тендеру');
+    }
+    if (tender.status !== 'under_review') {
+      throw conflict('Завершить без победителя можно только тендер на рассмотрении');
+    }
+    const now = new Date();
+    await tx
+      .update(tenders)
+      .set({
+        status: 'closed',
+        closeReason: reason,
+        finishedAt: now,
+        updatedAt: now,
+        revision: bumpRevision(),
+      })
+      .where(eq(tenders.id, id));
+  });
+  bus.emitTenderChanged(id, 'status');
 }

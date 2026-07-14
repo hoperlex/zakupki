@@ -28,6 +28,8 @@ export const positionInput = z.object({
   spec: z.string().max(2000).optional().nullable(),
   isRequired: z.boolean().default(true),
   targetPrice: money().optional().nullable(),
+  /** Единица в написании внешнего источника — только для аудита. Кабинет не заполняет. */
+  sourceUnit: z.string().max(32).optional().nullable(),
 });
 export type PositionInput = z.infer<typeof positionInput>;
 

@@ -31,7 +31,10 @@ export function BidComparisonPage() {
     onError: (err) => message.error(err instanceof ApiError ? err.message : 'Ошибка'),
   });
 
-  const canAward = tender && ['collecting', 'under_review'].includes(tender.status);
+  // Только under_review: до окончания приёма победителя определять нельзя, и
+  // сервер такой запрос отклоняет — кнопка на 'collecting' лишь вводила бы в
+  // заблуждение и гарантированно падала.
+  const canAward = tender?.status === 'under_review';
   const awardedId = tender?.awardedBidId;
 
   const columns = [

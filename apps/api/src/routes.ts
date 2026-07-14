@@ -3,6 +3,7 @@ import { accreditationRoutes } from './modules/accreditation/routes';
 import { authRoutes } from './modules/auth/routes';
 import { bidRoutes } from './modules/bids/routes';
 import { categoryRoutes } from './modules/categories/routes';
+import { externalRoutes } from './modules/external/routes';
 import { fileRoutes } from './modules/files/routes';
 import { invitationRoutes } from './modules/invitations/routes';
 import { notificationRoutes } from './modules/notifications/routes';
@@ -20,4 +21,6 @@ export async function routes(app: FastifyInstance): Promise<void> {
   await app.register(tenderRoutes, { prefix: '/tenders' });
   await app.register(bidRoutes, { prefix: '/tenders' });
   await app.register(invitationRoutes);
+  // Машинный API для внешних систем: api-ключ вместо сессии, без CSRF.
+  await app.register(externalRoutes, { prefix: '/external' });
 }

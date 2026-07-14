@@ -1,5 +1,6 @@
 import {
   boolean,
+  char,
   integer,
   jsonb,
   numeric,
@@ -175,6 +176,16 @@ export const tenders = pgTable('tenders', {
   awardedBidId: uuid('awarded_bid_id'),
   closeReason: text('close_reason'),
   publishedAt: timestamp('published_at', { withTimezone: true }),
+  // Итоги подведены: award либо закрытие без победителя.
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  // ─── происхождение из внешней системы (машинный API) ───
+  sourceSystem: varchar('source_system', { length: 32 }),
+  externalRef: varchar('external_ref', { length: 128 }),
+  sourceRevision: integer('source_revision'),
+  sourcePayloadHash: char('source_payload_hash', { length: 64 }),
+  sourceApiKeyId: uuid('source_api_key_id'),
+  // Монотонная ревизия состояния для внешнего клиента (см. bumpRevision).
+  revision: integer('revision').notNull().default(1),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   deletedAt: deletedAt(),
@@ -194,6 +205,9 @@ export const tenderPositions = pgTable('tender_positions', {
   spec: text('spec'),
   isRequired: boolean('is_required').notNull().default(true),
   targetPrice: numeric('target_price', { precision: 18, scale: 2 }),
+  // Единица в написании источника («шт», «м²») — для аудита маппинга.
+  // Отдельно от spec: spec видит поставщик, это не место для метаданных.
+  sourceUnit: varchar('source_unit', { length: 32 }),
 });
 
 // ─── bids (one active per supplier org per tender) ───
@@ -302,10 +316,16 @@ export const notifications = pgTable('notifications', {
   createdAt: createdAt(),
 });
 
-// ─── external API surface (designed; endpoints deferred) ───
+// ─── external API surface (машинные ключи для интеграций) ───
+// Секрет ключа не хранится: только префикс (для поиска) и SHA-256 полного ключа.
 export const apiKeys = pgTable('api_keys', {
   id: pk(),
   organizationId: uuid('organization_id').references(() => organizations.id),
+  // Технический пользователь-actor: под ним пишется tenders.created_by.
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id),
+  clientCode: varchar('client_code', { length: 32 }),
   keyPrefix: varchar('key_prefix', { length: 16 }).notNull(),
   keyHash: varchar('key_hash', { length: 64 }).notNull(),
   scopes: text('scopes').array(),

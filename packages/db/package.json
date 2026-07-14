@@ -16,6 +16,7 @@
     "db:migrate:check": "tsx src/migrate.ts check",
     "db:seed": "tsx src/seed.ts",
     "db:reset": "tsx src/reset.ts",
+    "db:mint-api-key": "tsx src/scripts/mint-api-key.ts",
     "build": "tsc -p tsconfig.json --noEmit",
     "lint": "echo 'no lint'",
     "test": "vitest run"

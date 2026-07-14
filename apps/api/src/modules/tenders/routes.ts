@@ -10,6 +10,7 @@ import {
 import type { AuthPayload } from '../../plugins/auth';
 import {
   cancelTender,
+  closeTenderWithoutAward,
   createTender,
   getTenderDetail,
   listTenders,
@@ -95,6 +96,23 @@ export async function tenderRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request) => {
       await cancelTender(app.db, request.params.id, viewerOf(request)!, request.body.reason);
+      return { ok: true };
+    },
+  );
+
+  // Завершение без победителя (under_review → closed). Причина обязательна:
+  // это итог тендера, он уходит наружу как outcome='no_award'.
+  r.post(
+    '/:id/close',
+    {
+      preHandler: app.requireRole('manager', 'admin'),
+      schema: {
+        params: idParam,
+        body: z.object({ reason: z.string().trim().min(3, 'Укажите причину').max(500) }),
+      },
+    },
+    async (request) => {
+      await closeTenderWithoutAward(app.db, request.params.id, viewerOf(request)!, request.body.reason);
       return { ok: true };
     },
   );
