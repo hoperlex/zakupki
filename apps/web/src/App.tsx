@@ -14,7 +14,6 @@ import { AdminTendersList } from './features/admin/AdminTendersList';
 import { AdministrationPage } from './features/admin/administration/AdministrationPage';
 import { CategoriesAdmin } from './features/admin/CategoriesAdmin';
 import { ReferencePage } from './features/admin/reference/ReferencePage';
-import { SuppliersRegistry } from './features/admin/SuppliersRegistry';
 import { TenderManagePage } from './features/admin/TenderManagePage';
 import { TenderWizard } from './features/admin/TenderWizard';
 import { BidComparisonPage } from './features/bidding/BidComparisonPage';
@@ -75,7 +74,6 @@ export default function App() {
         <Route path="tenders/:id" element={<TenderManagePage />} />
         <Route path="tenders/:id/bids" element={<BidComparisonPage />} />
         <Route path="tenders/:id/invitations" element={<InvitationsPage />} />
-        <Route path="suppliers" element={<SuppliersRegistry />} />
         <Route path="categories" element={<CategoriesAdmin />} />
         <Route path="reference" element={<ReferencePage />} />
         <Route

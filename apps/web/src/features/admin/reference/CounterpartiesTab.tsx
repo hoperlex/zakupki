@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App, Select, Space, Table, Tag, Typography } from 'antd';
+import { App, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { useState } from 'react';
 import type { CounterpartySummary, CounterpartyType } from '@zakupki/shared';
 import {
   COUNTERPARTY_TYPES,
@@ -7,6 +8,7 @@ import {
   GENERAL_CONTRACTOR_LABEL,
 } from '@zakupki/shared';
 import { ApiError } from '../../../api/client';
+import { AccreditationTag } from '../../../components/StatusTag';
 import { listCounterparties, setCounterpartyType, setGeneralContractor } from './api';
 
 const { Text } = Typography;
@@ -23,6 +25,7 @@ function errText(err: unknown): string {
 export function CounterpartiesTab() {
   const qc = useQueryClient();
   const { message } = App.useApp();
+  const [status, setStatus] = useState<string>('all');
   const { data, isLoading } = useQuery({
     queryKey: ['counterparties'],
     queryFn: listCounterparties,
@@ -51,6 +54,7 @@ export function CounterpartiesTab() {
   const rows = data ?? [];
   const gc = rows.find((o) => o.isGeneralContractor) ?? null;
   const gcOptions = rows.map((o) => ({ label: o.shortName ?? o.fullName, value: o.id }));
+  const filtered = status === 'all' ? rows : rows.filter((o) => o.accreditationStatus === status);
 
   return (
     <div>
@@ -68,10 +72,23 @@ export function CounterpartiesTab() {
         />
       </Space>
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <Segmented
+          value={status}
+          onChange={(v) => setStatus(v as string)}
+          options={[
+            { label: 'Все', value: 'all' },
+            { label: 'Аккредитованы', value: 'accredited' },
+            { label: 'На проверке', value: 'pending' },
+            { label: 'Отклонены', value: 'rejected' },
+          ]}
+        />
+      </div>
+
       <Table<CounterpartySummary>
         rowKey="id"
         loading={isLoading}
-        dataSource={rows}
+        dataSource={filtered}
         columns={[
           { title: 'Наименование', dataIndex: 'fullName' },
           { title: 'ИНН', dataIndex: 'inn', width: 150 },
@@ -79,7 +96,7 @@ export function CounterpartiesTab() {
           {
             title: 'Тип',
             dataIndex: 'counterpartyType',
-            width: 220,
+            width: 200,
             render: (type: CounterpartyType, row) =>
               row.isGeneralContractor ? (
                 <Tag color="gold">{GENERAL_CONTRACTOR_LABEL}</Tag>
@@ -92,6 +109,12 @@ export function CounterpartiesTab() {
                   onChange={(t) => typeMut.mutate({ id: row.id, type: t })}
                 />
               ),
+          },
+          {
+            title: 'Аккредитация',
+            dataIndex: 'accreditationStatus',
+            width: 180,
+            render: (s) => <AccreditationTag status={s} />,
           },
         ]}
       />
