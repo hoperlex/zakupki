@@ -11,7 +11,9 @@ import { SecurityQueuePage } from './features/accreditation/SecurityQueuePage';
 import { SupplierReviewPage } from './features/accreditation/SupplierReviewPage';
 import { AdminDashboard } from './features/admin/AdminDashboard';
 import { AdminTendersList } from './features/admin/AdminTendersList';
+import { AdministrationPage } from './features/admin/administration/AdministrationPage';
 import { CategoriesAdmin } from './features/admin/CategoriesAdmin';
+import { ReferencePage } from './features/admin/reference/ReferencePage';
 import { SuppliersRegistry } from './features/admin/SuppliersRegistry';
 import { TenderManagePage } from './features/admin/TenderManagePage';
 import { TenderWizard } from './features/admin/TenderWizard';
@@ -75,6 +77,15 @@ export default function App() {
         <Route path="tenders/:id/invitations" element={<InvitationsPage />} />
         <Route path="suppliers" element={<SuppliersRegistry />} />
         <Route path="categories" element={<CategoriesAdmin />} />
+        <Route path="reference" element={<ReferencePage />} />
+        <Route
+          path="administration"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <AdministrationPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="notifications" element={<NotificationsPage />} />
       </Route>
 

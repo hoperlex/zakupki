@@ -1,6 +1,7 @@
 export * from './enums';
 export * from './common';
 export * from './dto/auth';
+export * from './dto/user';
 export * from './dto/organization';
 export * from './dto/category';
 export * from './dto/tender';

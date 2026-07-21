@@ -1,6 +1,6 @@
-import { App, Button, Form, Input } from 'antd';
+import { App, Button, Form, Input, Result } from 'antd';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { RegisterInput } from '@zakupki/shared';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
@@ -8,23 +8,39 @@ import { AuthCard } from './AuthCard';
 
 export function RegisterPage() {
   const { register } = useAuth();
-  const navigate = useNavigate();
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
 
   const onFinish = async (values: RegisterInput & { confirm?: string }) => {
     setLoading(true);
     try {
       const { confirm: _c, ...input } = values;
       await register(input);
-      message.success('Аккаунт создан. Заполните карточку компании.');
-      navigate('/app/company', { replace: true });
+      setDone(true);
     } catch (err) {
       message.error(err instanceof ApiError ? err.message : 'Ошибка регистрации');
     } finally {
       setLoading(false);
     }
   };
+
+  if (done) {
+    return (
+      <AuthCard title="Заявка отправлена">
+        <Result
+          status="success"
+          title="Аккаунт создан"
+          subTitle="Учётная запись будет активирована администратором портала. После активации вы сможете войти."
+          extra={
+            <Link to="/login">
+              <Button type="primary">Перейти ко входу</Button>
+            </Link>
+          }
+        />
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard

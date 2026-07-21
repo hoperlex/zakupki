@@ -9,10 +9,12 @@ import { invitationRoutes } from './modules/invitations/routes';
 import { notificationRoutes } from './modules/notifications/routes';
 import { organizationRoutes } from './modules/organizations/routes';
 import { tenderRoutes } from './modules/tenders/routes';
+import { userRoutes } from './modules/users/routes';
 
 export async function routes(app: FastifyInstance): Promise<void> {
   app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(userRoutes, { prefix: '/users' });
   await app.register(categoryRoutes, { prefix: '/categories' });
   await app.register(organizationRoutes, { prefix: '/orgs' });
   await app.register(accreditationRoutes, { prefix: '/accreditation' });

@@ -2,12 +2,14 @@ import {
   AppstoreOutlined,
   AuditOutlined,
   BellOutlined,
+  BookOutlined,
   DashboardOutlined,
   FileAddOutlined,
   FileSearchOutlined,
   LogoutOutlined,
   ProfileOutlined,
   SafetyCertificateOutlined,
+  SettingOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -23,7 +25,7 @@ import { fetchNotifications } from '../features/notifications/NotificationsPage'
 const { Sider, Header, Content } = Layout;
 const { Text } = Typography;
 
-type Item = { key: string; icon: React.ReactNode; label: string };
+type Item = { key: string; icon: React.ReactNode; label: string; adminOnly?: boolean };
 
 const SUPPLIER_MENU: Item[] = [
   { key: '/app', icon: <DashboardOutlined />, label: 'Дашборд' },
@@ -39,6 +41,8 @@ const ADMIN_MENU: Item[] = [
   { key: '/admin/tenders/new', icon: <FileAddOutlined />, label: 'Новый тендер' },
   { key: '/admin/suppliers', icon: <TeamOutlined />, label: 'Поставщики' },
   { key: '/admin/categories', icon: <AppstoreOutlined />, label: 'Категории' },
+  { key: '/admin/reference', icon: <BookOutlined />, label: 'Справочники' },
+  { key: '/admin/administration', icon: <SettingOutlined />, label: 'Администрирование', adminOnly: true },
 ];
 
 const SECURITY_MENU: Item[] = [
@@ -50,7 +54,12 @@ export function AppShell({ area }: { area: 'supplier' | 'admin' | 'security' }) 
   const navigate = useNavigate();
   const location = useLocation();
 
-  const items = area === 'supplier' ? SUPPLIER_MENU : area === 'admin' ? ADMIN_MENU : SECURITY_MENU;
+  const items =
+    area === 'supplier'
+      ? SUPPLIER_MENU
+      : area === 'admin'
+        ? ADMIN_MENU.filter((i) => !i.adminOnly || user?.role === 'admin')
+        : SECURITY_MENU;
   const notifPath = area === 'supplier' ? '/app/notifications' : area === 'admin' ? '/admin/notifications' : '/sb/notifications';
   const { data: notif } = useQuery({
     queryKey: ['notifications'],

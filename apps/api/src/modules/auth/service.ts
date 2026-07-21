@@ -30,6 +30,7 @@ export async function registerUser(
   db: Database,
   input: { fullName: string; email: string; password: string; phone?: string },
   role: Role = 'supplier',
+  isActive = true,
 ): Promise<string> {
   const existing = await db.query.users.findFirst({
     where: and(eq(users.email, input.email), isNull(users.deletedAt)),
@@ -44,6 +45,7 @@ export async function registerUser(
       phone: input.phone ?? null,
       passwordHash,
       role,
+      isActive,
     })
     .returning({ id: users.id });
   return row!.id;

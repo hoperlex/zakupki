@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { account, bik, inn, kpp, ogrn } from '../common';
-import { ACCREDITATION_STATUSES } from '../enums';
+import { ACCREDITATION_STATUSES, COUNTERPARTY_TYPES, ORG_KINDS } from '../enums';
 
 // Counterparty questionnaire (анкета контрагента) — free-form key answers kept as jsonb.
 export const questionnaire = z
@@ -61,6 +61,32 @@ export const orgSummary = z.object({
   createdAt: z.string(),
 });
 export type OrgSummary = z.infer<typeof orgSummary>;
+
+// ─── Справочник контрагентов ───
+// Строка таблицы контрагентов (все организации: internal + supplier).
+export const counterpartySummary = z.object({
+  id: z.string().uuid(),
+  fullName: z.string(),
+  shortName: z.string().nullable(),
+  inn: z.string(),
+  kpp: z.string().nullable(),
+  kind: z.enum(ORG_KINDS),
+  counterpartyType: z.enum(COUNTERPARTY_TYPES),
+  isGeneralContractor: z.boolean(),
+  accreditationStatus: z.enum(ACCREDITATION_STATUSES),
+  createdAt: z.string(),
+});
+export type CounterpartySummary = z.infer<typeof counterpartySummary>;
+
+export const setCounterpartyTypeInput = z.object({
+  counterpartyType: z.enum(COUNTERPARTY_TYPES),
+});
+export type SetCounterpartyTypeInput = z.infer<typeof setCounterpartyTypeInput>;
+
+export const setGeneralContractorInput = z.object({
+  organizationId: z.string().uuid(),
+});
+export type SetGeneralContractorInput = z.infer<typeof setGeneralContractorInput>;
 
 // ИНН autofill result.
 export const innLookupResult = z.object({

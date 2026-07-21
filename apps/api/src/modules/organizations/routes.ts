@@ -1,12 +1,20 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { companyCardInput, inn } from '@zakupki/shared';
+import {
+  companyCardInput,
+  inn,
+  setCounterpartyTypeInput,
+  setGeneralContractorInput,
+} from '@zakupki/shared';
 import { lookupInn } from '../../lib/inn-lookup';
 import {
   getMyOrg,
   getOrgById,
+  listCounterparties,
   listSupplierOrgs,
+  setCounterpartyType,
+  setGeneralContractor,
   submitAccreditation,
   upsertCompanyCard,
 } from './service';
@@ -37,6 +45,34 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
     '/lookup',
     { preHandler: app.authenticate, schema: { querystring: z.object({ inn: inn() }) } },
     async (request) => lookupInn(request.query.inn),
+  );
+
+  // ─── Справочник контрагентов (менеджер + админ) ───
+  r.get(
+    '/counterparties',
+    { preHandler: app.requireRole('admin', 'manager') },
+    async () => listCounterparties(app.db),
+  );
+
+  r.post(
+    '/general-contractor',
+    { preHandler: app.requireRole('admin', 'manager'), schema: { body: setGeneralContractorInput } },
+    async (request) => {
+      await setGeneralContractor(app.db, request.body.organizationId);
+      return { ok: true };
+    },
+  );
+
+  r.patch(
+    '/:id/counterparty-type',
+    {
+      preHandler: app.requireRole('admin', 'manager'),
+      schema: { params: z.object({ id: z.string().uuid() }), body: setCounterpartyTypeInput },
+    },
+    async (request) => {
+      await setCounterpartyType(app.db, request.params.id, request.body.counterpartyType);
+      return { ok: true };
+    },
   );
 
   r.get(

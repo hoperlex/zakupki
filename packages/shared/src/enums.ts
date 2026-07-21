@@ -3,6 +3,11 @@
 export const ORG_KINDS = ['internal', 'supplier'] as const;
 export type OrgKind = (typeof ORG_KINDS)[number];
 
+// Тип контрагента в справочнике. Генподрядчик выделяется отдельным флагом
+// organizations.is_general_contractor (ровно один), поэтому здесь его нет.
+export const COUNTERPARTY_TYPES = ['contractor', 'supplier'] as const;
+export type CounterpartyType = (typeof COUNTERPARTY_TYPES)[number];
+
 export const ROLES = ['admin', 'manager', 'security', 'supplier'] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -114,3 +119,11 @@ export const VAT_RATE_LABELS: Record<VatRate, string> = {
   vat0: 'НДС 0%',
   none: 'Без НДС',
 };
+
+export const COUNTERPARTY_TYPE_LABELS: Record<CounterpartyType, string> = {
+  contractor: 'Подрядчик',
+  supplier: 'Поставщик',
+};
+
+// Метка выделенного генподрядчика (organizations.is_general_contractor = true).
+export const GENERAL_CONTRACTOR_LABEL = 'Генподрядчик';

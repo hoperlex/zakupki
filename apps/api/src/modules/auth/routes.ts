@@ -46,9 +46,11 @@ async function establishSession(
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
-  r.post('/register', { schema: { body: registerInput } }, async (request, reply) => {
-    const userId = await registerUser(app.db, request.body);
-    return establishSession(app, reply, request, userId);
+  // Самостоятельная регистрация: учётка создаётся НЕактивной, без сессии.
+  // Активирует администратор в разделе «Администрирование» → «Пользователи».
+  r.post('/register', { schema: { body: registerInput } }, async (request) => {
+    await registerUser(app.db, request.body, 'supplier', false);
+    return { pending: true };
   });
 
   r.post('/login', { schema: { body: loginInput } }, async (request, reply) => {

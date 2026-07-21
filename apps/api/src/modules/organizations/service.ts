@@ -1,5 +1,11 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import type { CompanyCardInput, OrganizationOutput, OrgSummary } from '@zakupki/shared';
+import type {
+  CompanyCardInput,
+  CounterpartySummary,
+  CounterpartyType,
+  OrganizationOutput,
+  OrgSummary,
+} from '@zakupki/shared';
 import {
   categorySubscriptions,
   organizations,
@@ -175,4 +181,55 @@ export async function listSupplierOrgs(
     accreditationStatus: o.accreditationStatus,
     createdAt: o.createdAt.toISOString(),
   }));
+}
+
+// ─── Справочник контрагентов ───
+
+/** Все контрагенты (организации internal + supplier), кроме удалённых. */
+export async function listCounterparties(db: Database): Promise<CounterpartySummary[]> {
+  const rows = await db.query.organizations.findMany({
+    where: isNull(organizations.deletedAt),
+    orderBy: (o, { desc }) => [desc(o.isGeneralContractor), desc(o.createdAt)],
+  });
+  return rows.map((o) => ({
+    id: o.id,
+    fullName: o.fullName,
+    shortName: o.shortName,
+    inn: o.inn,
+    kpp: o.kpp,
+    kind: o.kind,
+    counterpartyType: o.counterpartyType,
+    isGeneralContractor: o.isGeneralContractor,
+    accreditationStatus: o.accreditationStatus,
+    createdAt: o.createdAt.toISOString(),
+  }));
+}
+
+export async function setCounterpartyType(
+  db: Database,
+  id: string,
+  counterpartyType: CounterpartyType,
+): Promise<void> {
+  const r = await db
+    .update(organizations)
+    .set({ counterpartyType, updatedAt: new Date() })
+    .where(and(eq(organizations.id, id), isNull(organizations.deletedAt)))
+    .returning({ id: organizations.id });
+  if (!r.length) throw notFound('Организация не найдена');
+}
+
+/** Назначить генподрядчика: снимаем флаг со старого, ставим новому (в транзакции). */
+export async function setGeneralContractor(db: Database, orgId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(organizations)
+      .set({ isGeneralContractor: false, updatedAt: new Date() })
+      .where(eq(organizations.isGeneralContractor, true));
+    const r = await tx
+      .update(organizations)
+      .set({ isGeneralContractor: true, updatedAt: new Date() })
+      .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
+      .returning({ id: organizations.id });
+    if (!r.length) throw notFound('Организация не найдена');
+  });
 }

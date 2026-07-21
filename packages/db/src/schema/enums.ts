@@ -3,6 +3,7 @@ import {
   ACCRED_VERDICTS,
   ACCREDITATION_STATUSES,
   BID_STATUSES,
+  COUNTERPARTY_TYPES,
   FILE_OWNERS,
   INVITE_STATUSES,
   NOTIF_TYPES,
@@ -16,6 +17,7 @@ import {
 } from '@zakupki/shared';
 
 export const orgKindEnum = pgEnum('org_kind', ORG_KINDS);
+export const counterpartyTypeEnum = pgEnum('counterparty_type', COUNTERPARTY_TYPES);
 export const roleEnum = pgEnum('role', ROLES);
 export const tenderTypeEnum = pgEnum('tender_type', TENDER_TYPES);
 export const tenderVisibilityEnum = pgEnum('tender_visibility', TENDER_VISIBILITIES);

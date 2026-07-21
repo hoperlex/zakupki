@@ -12,7 +12,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (input: LoginInput) => Promise<AuthUser>;
-  register: (input: RegisterInput) => Promise<AuthUser>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -48,14 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setUser],
   );
 
-  const register = useCallback(
-    async (input: RegisterInput) => {
-      const res = await api<AuthResponse>('/auth/register', { method: 'POST', body: input });
-      setUser(res.user);
-      return res.user;
-    },
-    [setUser],
-  );
+  // Самостоятельная регистрация: учётка создаётся неактивной, без автологина.
+  // Пользователь ждёт активации администратором.
+  const register = useCallback(async (input: RegisterInput) => {
+    await api<{ pending: boolean }>('/auth/register', { method: 'POST', body: input });
+  }, []);
 
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' });
