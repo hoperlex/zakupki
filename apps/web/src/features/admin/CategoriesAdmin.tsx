@@ -6,7 +6,7 @@ import type { CategoryNode, CreateCategoryInput, TenderType } from '@zakupki/sha
 import { api } from '../../api/client';
 import { fetchCategories } from '../catalog/api';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 function toTree(nodes: CategoryNode[]): DataNode[] {
   return nodes.map((n) => ({
@@ -72,7 +72,6 @@ function CategoryColumn({ kind }: { kind: TenderType }) {
 export function CategoriesAdmin() {
   return (
     <div>
-      <Title level={3}>Справочник категорий</Title>
       <Text type="secondary">Виды работ (СМР) и категории материалов для тендеров и подписок поставщиков.</Text>
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>

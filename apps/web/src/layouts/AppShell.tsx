@@ -38,7 +38,6 @@ const ADMIN_MENU: Item[] = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Дашборд' },
   { key: '/admin/tenders', icon: <FileSearchOutlined />, label: 'Тендеры' },
   { key: '/admin/tenders/new', icon: <FileAddOutlined />, label: 'Новый тендер' },
-  { key: '/admin/categories', icon: <AppstoreOutlined />, label: 'Категории' },
   { key: '/admin/reference', icon: <BookOutlined />, label: 'Справочники' },
   { key: '/admin/administration', icon: <SettingOutlined />, label: 'Администрирование', adminOnly: true },
 ];
